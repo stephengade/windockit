@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- Windows SDK projection gives us Windows.UI.Composition for the frosted glass. -->
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.18362.0</SupportedOSPlatformVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>WinDockIt</AssemblyName>
+    <RootNamespace>WinDockIt</RootNamespace>
+    <Product>WinDockIt</Product>
+    <Description>A clean, modern dock for Windows.</Description>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+</Project>
