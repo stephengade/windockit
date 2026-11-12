@@ -11,6 +11,7 @@ public sealed class DockConfig
     public double IconSize { get; set; } = 46;
     public double Magnification { get; set; } = 1.75;
     public bool AutoHide { get; set; }
+    public bool ShowStart { get; set; } = true;
     public List<DockItem> Items { get; set; } = new();
 
     public static string Folder =>

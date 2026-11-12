@@ -13,6 +13,9 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 - **Always fits.** No scrolling: when there are too many items, every icon shrinks evenly until the whole dock fits.
 - **Import from taskbar.** Brings over your pinned taskbar apps, in order, including Store apps. On first run the dock starts with them.
 - **Running indicators.** A dot under every app with an open window.
+- **Every open app.** Running apps that aren't pinned appear after a divider, and leave when you close them. Right-click › **Keep in Dock** pins one. Windows are grouped by app the same way the taskbar groups them, so web apps and Store apps get their own icons.
+- **Asks for attention.** When an app flashes for attention, its icon bounces and its dot turns orange until you look.
+- **Start button.** Opens the Start menu. Can be hidden from the dock's menu.
 - **Click to switch.** Clicking a running app brings it forward. Click again to minimize it. If the app has several windows, clicking cycles through them.
 - **Launch bounce.** Icons hop when an app starts.
 - **Pin anything.** Drag apps, shortcuts, files or folders onto the dock, or use **Add app…**.
@@ -28,7 +31,7 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 | --- | --- |
 | Open or switch to an app | Click its icon |
 | Open a new window | Shift+click or middle-click |
-| App options | Right-click an icon |
+| App options, its open windows, Keep in Dock, Close | Right-click an icon |
 | Dock settings (position, size, magnification, auto-hide) | Right-click an empty part of the dock |
 | Pin something | Drag it onto the dock |
 | Bring over your taskbar apps | Right-click an empty part of the dock › Import from taskbar |
@@ -83,7 +86,7 @@ All layout happens by hand each frame, in "dock space": distance *along* the doc
 | `AppBar.cs` | Reserves the dock's screen space, like the taskbar does |
 | `TaskbarPins.cs` | Reads the taskbar's pinned apps for import |
 | `Shell.cs` | High-res shell icons, shortcut targets, Recycle Bin |
-| `WindowList.cs` | Finds open app windows (running dots, click-to-switch) |
+| `WindowList.cs` | Finds open app windows and works out which app each belongs to |
 | `DockConfig.cs` | Settings and default pinned apps |
 | `Theme.cs` | Light/dark colors and menu styling |
 
@@ -92,7 +95,6 @@ All layout happens by hand each frame, in "dock space": distance *along* the doc
 Issues and pull requests are welcome. Some things that would be great to have:
 
 - Multi-monitor support (choose the screen, or one dock per screen)
-- Showing running apps that aren't pinned
 - Folder "stacks" that fan out
 - Windows taskbar-style jump lists on right-click
 - An app icon and installer

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -123,6 +124,26 @@ internal static class Shell
         return rtb;
     }
 
+    /// <summary>The Start button: a blue tile with a 2×2 grid of rounded squares.</summary>
+    public static ImageSource StartIcon()
+    {
+        var dv = new DrawingVisual();
+        using (var dc = dv.RenderOpen())
+        {
+            var bg = new LinearGradientBrush(Color.FromRgb(0x4D, 0x9F, 0xFF), Color.FromRgb(0x1E, 0x5B, 0xE6), 90);
+            dc.DrawRoundedRectangle(bg, null, new Rect(16, 16, 224, 224), 52, 52);
+            var fg = new SolidColorBrush(Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF));
+            const double sq = 50, gap = 12, x0 = 128 - sq - gap / 2;
+            for (int r = 0; r < 2; r++)
+                for (int c = 0; c < 2; c++)
+                    dc.DrawRoundedRectangle(fg, null, new Rect(x0 + c * (sq + gap), x0 + r * (sq + gap), sq, sq), 12, 12);
+        }
+        var rtb = new RenderTargetBitmap(256, 256, 96, 96, PixelFormats.Pbgra32);
+        rtb.Render(dv);
+        rtb.Freeze();
+        return rtb;
+    }
+
     public static string DisplayName(string path)
     {
         try
@@ -173,13 +194,174 @@ internal static class Shell
         return $"{location}|".ToLowerInvariant();
     }
 
-    /// <summary>Process name used to decide whether a pinned item is running.</summary>
-    public static string? ResolveProcessName(DockItem it)
+    // ───── App identity (AppUserModelID), the key Windows uses to group taskbar buttons ─────
+
+    public const string AppsFolder = @"shell:AppsFolder\";
+
+    [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IPropertyStore
     {
-        if (!string.IsNullOrWhiteSpace(it.ProcessName)) return it.ProcessName;
-        var target = it.Location;
-        if (target.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)) target = ResolveShortcut(target) ?? target;
-        return target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? Path.GetFileNameWithoutExtension(target) : null;
+        [PreserveSig] int GetCount(out uint count);
+        [PreserveSig] int GetAt(uint i, out PROPERTYKEY key);
+        [PreserveSig] int GetValue(ref PROPERTYKEY key, out PROPVARIANT value);
+    }
+
+    [StructLayout(LayoutKind.Sequential)] struct PROPERTYKEY { public Guid fmtid; public uint pid; }
+    [StructLayout(LayoutKind.Explicit, Size = 24)] struct PROPVARIANT { [FieldOffset(0)] public ushort vt; [FieldOffset(8)] public IntPtr p; }
+
+    [DllImport("shell32.dll")] static extern int SHGetPropertyStoreForWindow(IntPtr h, ref Guid iid, out IPropertyStore ps);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    static extern int SHGetPropertyStoreFromParsingName(string path, IntPtr bc, int flags, ref Guid iid, out IPropertyStore ps);
+    [DllImport("ole32.dll")] static extern int PropVariantClear(ref PROPVARIANT v);
+
+    // System.AppUserModel.* property IDs.
+    const uint PID_RelaunchCommand = 2, PID_RelaunchIcon = 3, PID_RelaunchName = 4, PID_AppId = 5;
+
+    static string? ReadAppId(IPropertyStore ps, uint pid = PID_AppId)
+    {
+        try
+        {
+            var key = new PROPERTYKEY { fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), pid = pid };
+            if (ps.GetValue(ref key, out var v) != 0) return null;
+            try { return v.vt == 31 /* VT_LPWSTR */ ? Marshal.PtrToStringUni(v.p) : null; }
+            finally { PropVariantClear(ref v); }
+        }
+        finally { Marshal.ReleaseComObject(ps); }
+    }
+
+    /// <summary>The app ID a window set for itself, if any.</summary>
+    public static string? WindowAppId(IntPtr h) => WindowProperty(h, PID_AppId);
+
+    static string? WindowProperty(IntPtr h, uint pid)
+    {
+        var iid = typeof(IPropertyStore).GUID;
+        try { return SHGetPropertyStoreForWindow(h, ref iid, out var ps) == 0 ? ReadAppId(ps, pid) : null; }
+        catch { return null; }
+    }
+
+    [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
+    static extern int SHLoadIndirectString(string source, StringBuilder output, int size, IntPtr reserved);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    static extern int SHDefExtractIcon(string file, int index, uint flags, out IntPtr large, out IntPtr small, uint sizes);
+    [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr h);
+
+    static string? Indirect(string? s)
+    {
+        if (string.IsNullOrEmpty(s) || s[0] != '@') return s;
+        var sb = new StringBuilder(512);
+        return SHLoadIndirectString(s, sb, sb.Capacity, IntPtr.Zero) == 0 ? sb.ToString() : null;
+    }
+
+    /// <summary>Loads an icon resource written as "path,index" (index may be negative, meaning a resource ID).</summary>
+    static ImageSource? IconResource(string? spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec)) return null;
+        spec = Environment.ExpandEnvironmentVariables(spec.Trim().Trim('"'));
+        int comma = spec.LastIndexOf(',');
+        int index = 0;
+        if (comma > 0 && int.TryParse(spec[(comma + 1)..], out int i)) { index = i; spec = spec[..comma].Trim().Trim('"'); }
+        if (!File.Exists(spec)) return null;
+        if (SHDefExtractIcon(spec, index, 0, out IntPtr large, out IntPtr small, 256) != 0 || large == IntPtr.Zero) return null;
+        try
+        {
+            var img = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(large, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+            img.Freeze();
+            return img;
+        }
+        catch { return null; }
+        finally
+        {
+            DestroyIcon(large);
+            if (small != IntPtr.Zero) DestroyIcon(small);
+        }
+    }
+
+    /// <summary>Splits a command line into the program and its arguments.</summary>
+    static (string File, string Args) SplitCommand(string cmd)
+    {
+        cmd = cmd.Trim();
+        if (cmd.StartsWith('"'))
+        {
+            int end = cmd.IndexOf('"', 1);
+            if (end > 0) return (cmd[1..end], cmd[(end + 1)..].Trim());
+        }
+        int sp = cmd.IndexOf(' ');
+        return sp < 0 ? (cmd, "") : (cmd[..sp], cmd[(sp + 1)..].Trim());
+    }
+
+    static string? ShortcutAppId(string lnk)
+    {
+        var iid = typeof(IPropertyStore).GUID;
+        try { return SHGetPropertyStoreFromParsingName(lnk, IntPtr.Zero, 0, ref iid, out var ps) == 0 ? ReadAppId(ps) : null; }
+        catch { return null; }
+    }
+
+    /// <summary>What a pinned item's windows look like: its app ID and/or the exe it runs.</summary>
+    public static (string? Aumid, string? Exe) PinIdentity(string location)
+    {
+        if (location.StartsWith(AppsFolder, StringComparison.OrdinalIgnoreCase))
+            return (location[AppsFolder.Length..], null);
+        if (location.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
+            return (ShortcutAppId(location), ResolveShortcut(location));
+        if (location.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            return (null, location);
+        return (null, null);
+    }
+
+    [ComImport, Guid("43826d1e-e718-42ee-bc55-a1e261c37bfe"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IShellItem
+    {
+        void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
+        void GetParent(out IShellItem ppsi);
+        [PreserveSig] int GetDisplayName(uint sigdn, out IntPtr name);
+        void GetAttributes(uint mask, out uint attribs);
+        void Compare(IShellItem psi, uint hint, out int order);
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    static extern int SHCreateItemFromParsingName(string path, IntPtr pbc, ref Guid riid, out IShellItem item);
+
+    /// <summary>The name Explorer shows for a path (works for shell:AppsFolder entries), or null if it doesn't exist.</summary>
+    public static string? ShellName(string path)
+    {
+        var iid = typeof(IShellItem).GUID;
+        try
+        {
+            if (SHCreateItemFromParsingName(path, IntPtr.Zero, ref iid, out var item) != 0) return null;
+            try
+            {
+                if (item.GetDisplayName(0 /* SIGDN_NORMALDISPLAY */, out IntPtr p) != 0) return null;
+                try { return Marshal.PtrToStringUni(p); }
+                finally { Marshal.FreeCoTaskMem(p); }
+            }
+            finally { Marshal.ReleaseComObject(item); }
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// How to show and relaunch a running app that isn't pinned: through its Start menu entry
+    /// when it has one (right name, right icon, launches Store apps), otherwise its exe.
+    /// </summary>
+    public static (string Name, string Location, string? Args, ImageSource? Icon) DescribeRunning(AppWindow w)
+    {
+        if (w.Aumid != null && ShellName(AppsFolder + w.Aumid) is { Length: > 0 } n)
+            return (n, AppsFolder + w.Aumid, null, null);
+
+        // Apps launched from a shortcut (Git Bash, for one) tell the taskbar how to show and relaunch
+        // them through properties on their window.
+        string? name = Indirect(WindowProperty(w.Handle, PID_RelaunchName));
+        var icon = IconResource(WindowProperty(w.Handle, PID_RelaunchIcon));
+        string? cmd = WindowProperty(w.Handle, PID_RelaunchCommand);
+        string location = w.ExePath ?? w.ProcessName;
+        string? args = null;
+        if (!string.IsNullOrWhiteSpace(cmd))
+        {
+            var (file, a) = SplitCommand(Environment.ExpandEnvironmentVariables(cmd));
+            if (File.Exists(file)) { location = file; args = a.Length > 0 ? a : null; }
+        }
+        if (string.IsNullOrWhiteSpace(name)) name = w.ExePath != null ? DisplayName(w.ExePath) : w.ProcessName;
+        return (name, location, args, icon);
     }
 
     public static long RecycleBinCount()

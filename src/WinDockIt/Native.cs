@@ -31,7 +31,7 @@ internal static class Native
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder sb, int n);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
@@ -46,6 +46,27 @@ internal static class Native
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int v, int size);
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern int SHQueryRecycleBin(string? root, ref SHQUERYRBINFO info);
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern int SHEmptyRecycleBin(IntPtr h, string? root, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int n);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] public static extern bool RegisterShellHookWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool DeregisterShellHookWindow(IntPtr h);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern uint RegisterWindowMessage(string name);
+    public const uint WM_CLOSE = 0x10;
+
+    public static string WindowTitle(IntPtr h)
+    {
+        var sb = new StringBuilder(256);
+        GetWindowText(h, sb, sb.Capacity);
+        return sb.ToString();
+    }
+
+    /// <summary>Opens the Start menu, exactly as pressing the Windows key does.</summary>
+    public static void OpenStart()
+    {
+        keybd_event(0x5B, 0, 0, UIntPtr.Zero);
+        keybd_event(0x5B, 0, 2, UIntPtr.Zero);
+    }
 
     public static string ClassName(IntPtr h)
     {

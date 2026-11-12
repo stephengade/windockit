@@ -35,6 +35,8 @@ public sealed class DockWindow : Window
     readonly List<DockItem> _items = new();
     readonly DockItem _sep = new() { IsSeparator = true };
     readonly DockItem _trash = new() { IsTrash = true, Name = "Recycle Bin", Location = Shell.RecycleBinPath };
+    readonly DockItem _sepRun = new() { IsSeparator = true };   // between pinned and running-only apps
+    readonly DockItem _start = new() { IsStart = true, Name = "Start" };
 
     readonly Canvas _root = new();
     readonly Canvas _shadowHost = new() { IsHitTestVisible = false };
@@ -42,7 +44,6 @@ public sealed class DockWindow : Window
     readonly Border _tint = new() { BorderThickness = new Thickness(1), IsHitTestVisible = false };
     readonly Border _shine = new() { BorderThickness = new Thickness(1), IsHitTestVisible = false };
     readonly Rectangle _hit = new() { Fill = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)) };
-    readonly Border _sepLine = new() { IsHitTestVisible = false };
     readonly Canvas _itemLayer = new();
     readonly Border _label = new()
     {
@@ -53,7 +54,11 @@ public sealed class DockWindow : Window
     readonly GlassBackdrop _plate = new();
     AppBar? _appBar;
     readonly DispatcherTimer _fastTimer, _slowTimer;
-    Brush _dotBrush = Brushes.Black;
+    Brush _dotBrush = Brushes.Black, _sepBrush = Brushes.Gray;
+    static readonly Brush AttentionBrush = Theme.Brush(0xFFFF9F0Au);
+    uint _shellHookMsg;
+    double _length;               // length of the screen edge the dock sits on, in DIPs
+    readonly DispatcherTimer _refreshSoon;
 
     IntPtr _hwnd;
     double _dpi = 1;
@@ -97,12 +102,13 @@ public sealed class DockWindow : Window
         };
         _shadowHost.Children.Add(_shadow);
         _label.Child = _labelText;
-        foreach (var el in new UIElement[] { _shadowHost, _tint, _shine, _hit, _sepLine, _itemLayer, _label })
+        foreach (var el in new UIElement[] { _shadowHost, _tint, _shine, _hit, _itemLayer, _label })
             _root.Children.Add(el);
 
-        foreach (var it in _cfg.Items) { Prepare(it); _items.Add(it); }
-        Prepare(_sep); Prepare(_trash);
-        _items.Add(_sep); _items.Add(_trash);
+        foreach (var it in new[] { _sep, _sepRun, _trash, _start }) Prepare(it);
+        var pins = _cfg.Items.ToList();
+        foreach (var it in pins) Prepare(it);
+        Rebuild(pins, new());
 
         _root.MouseMove += OnMouseMove;
         _root.MouseLeave += (_, _) => { if (!_dragging && _pressItem == null) EndHover(); };
@@ -123,6 +129,12 @@ public sealed class DockWindow : Window
 
         _fastTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(120), DispatcherPriority.Background, (_, _) => FastTick(), Dispatcher);
         _slowTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(1500), DispatcherPriority.Background, (_, _) => SlowTick(), Dispatcher);
+        _refreshSoon = new DispatcherTimer(TimeSpan.FromMilliseconds(250), DispatcherPriority.Background, (_, _) =>
+        {
+            _refreshSoon!.Stop();
+            RefreshRunning();
+        }, Dispatcher);
+        _refreshSoon.Stop();
 
         SourceInitialized += (_, _) =>
         {
@@ -130,6 +142,10 @@ public sealed class DockWindow : Window
             Native.AddExStyle(_hwnd, Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE);
             _appBar = new AppBar(_hwnd);
             _appBar.Changed += () => Dispatcher.InvokeAsync(ApplyLayout);
+
+            // Shell hook: windows opening, closing, being activated and flashing for attention.
+            _shellHookMsg = Native.RegisterWindowMessage("SHELLHOOK");
+            if (Native.RegisterShellHookWindow(_hwnd)) HwndSource.FromHwnd(_hwnd)?.AddHook(ShellHook);
             ApplyLayout();
         };
         Loaded += (_, _) =>
@@ -148,7 +164,11 @@ public sealed class DockWindow : Window
     public void Start()
     {
         // Give the reserved screen space back however we exit.
-        Application.Current.Exit += (_, _) => _appBar?.Dispose();
+        Application.Current.Exit += (_, _) =>
+        {
+            _appBar?.Dispose();
+            if (_hwnd != IntPtr.Zero) Native.DeregisterShellHookWindow(_hwnd);
+        };
         AppDomain.CurrentDomain.UnhandledException += (_, _) => _appBar?.Dispose();
         _plate.Show();
         new WindowInteropHelper(this).Owner = _plate.Handle;
@@ -158,46 +178,122 @@ public sealed class DockWindow : Window
 
     // ───────────────────────── items ─────────────────────────
 
+    /// <summary>Creates an item's visuals and works out which windows belong to it.</summary>
     void Prepare(DockItem it)
     {
         it.Size = it.GoalSize = Base;
-        if (it.IsSeparator) return;
+        if (it.IsSeparator)
+        {
+            it.SepLine = new Border { IsHitTestVisible = false, Background = _sepBrush, Width = 1, Height = 1, RenderTransform = new ScaleTransform() };
+            return;
+        }
 
-        it.Icon = Shell.GetIcon(it.Location) ?? Shell.LetterIcon(it.Name);
-        it.Img = new Image { Source = it.Icon, Stretch = Stretch.Uniform };
+        it.Icon ??= it.IsStart ? Shell.StartIcon() : Shell.GetIcon(it.Location) ?? Shell.LetterIcon(it.Name);
+        // Icons keep a fixed layout size and are scaled with a transform. Changing Width every frame made
+        // WPF occasionally leave newly added elements unmeasured (drawn at 256px, or not at all), and
+        // transforms skip the layout pass entirely.
+        it.Img = new Image
+        {
+            Source = it.Icon, Stretch = Stretch.Uniform, Width = IconCanvas, Height = IconCanvas,
+            RenderTransform = new ScaleTransform(),
+        };
         RenderOptions.SetBitmapScalingMode(it.Img, BitmapScalingMode.HighQuality);
-        it.Img.Effect = new DropShadowEffect { BlurRadius = 8, ShadowDepth = 2, Direction = 270, Opacity = 0.26 };
+        // Shadow values are in the icon's unscaled space (IconCanvas px); at 46px they're ~8px blur, 2px drop.
+        it.Img.Effect = new DropShadowEffect { BlurRadius = 32, ShadowDepth = 9, Direction = 270, Opacity = 0.26 };
         it.Dot = new Ellipse { Width = 4, Height = 4, Fill = _dotBrush, IsHitTestVisible = false };
-        _itemLayer.Children.Add(it.Img);
-        _itemLayer.Children.Add(it.Dot);
-        it.MatchName = it.IsTrash ? null : Shell.ResolveProcessName(it);
+        if (it.IsPinned)
+        {
+            (it.AppId, it.ExePath) = Shell.PinIdentity(it.Location);
+            it.AppId = it.AppUserModelId ?? it.AppId;
+        }
     }
 
-    int PinnedCount => _items.Count(i => i.IsPinned);
+    List<DockItem> Pins => _items.Where(i => i.IsPinned).ToList();
+    List<DockItem> Transients => _items.Where(i => i.IsTransient).ToList();
+    int PinStart => _items.Count > 0 && _items[0].IsStart ? 1 : 0;
+
+    /// <summary>
+    /// Lays the dock out in its fixed order, adding and removing visuals for items that come and go:
+    /// Start · pinned apps · | · running apps that aren't pinned · | · Recycle Bin.
+    /// </summary>
+    void Rebuild(List<DockItem> pins, List<DockItem> transients)
+    {
+        var next = new List<DockItem>();
+        if (_cfg.ShowStart) next.Add(_start);
+        next.AddRange(pins);
+        if (transients.Count > 0) { next.Add(_sepRun); next.AddRange(transients); }
+        next.Add(_sep);
+        next.Add(_trash);
+
+        foreach (var it in _items.Except(next)) Detach(it);
+        foreach (var it in next.Except(_items)) Attach(it);
+        _items.Clear();
+        _items.AddRange(next);
+        if (_hovered != null && !_items.Contains(_hovered)) _hovered = null;
+        Refit();
+    }
+
+    void Attach(DockItem it)
+    {
+        foreach (var el in new UIElement?[] { it.SepLine, it.Img, it.Dot })
+            if (el != null && !_itemLayer.Children.Contains(el)) _itemLayer.Children.Add(el);
+    }
+
+    void Detach(DockItem it)
+    {
+        foreach (var el in new UIElement?[] { it.SepLine, it.Img, it.Dot })
+            if (el != null) _itemLayer.Children.Remove(el);
+    }
 
     bool AddPinned(string path, int index)
     {
         string key = Shell.IdentityKey(path);
-        if (_items.Any(i => i.IsPinned && Shell.IdentityKey(i.Location) == key)) return false;
+        var pins = Pins;
+        if (pins.Any(i => Shell.IdentityKey(i.Location) == key)) return false;
         var it = new DockItem { Name = Shell.DisplayName(path), Location = path };
         Prepare(it);
-        _items.Insert(Math.Clamp(index, 0, PinnedCount), it);
+        pins.Insert(Math.Clamp(index, 0, pins.Count), it);
+        Rebuild(pins, Transients);
         return true;
     }
 
+    /// <summary>Takes an item off the dock. If it's running it stays, with the other running apps, until it closes.</summary>
     void Unpin(DockItem it)
     {
-        _items.Remove(it);
-        _itemLayer.Children.Remove(it.Img);
-        _itemLayer.Children.Remove(it.Dot);
-        if (_hovered == it) _hovered = null;
+        var pins = Pins;
+        pins.Remove(it);
+        Rebuild(pins, Transients);
         SaveItems();
-        ApplyLayout();
+        RefreshRunning();
+    }
+
+    /// <summary>Pins a running app, like "Options › Keep in Dock" on the Mac.</summary>
+    void KeepInDock(DockItem t)
+    {
+        var it = new DockItem
+        {
+            Name = t.Name, Location = t.Location, Arguments = t.Arguments, Icon = t.Icon,
+            // Store apps' location already is their app ID; others need it kept so their windows still match.
+            AppUserModelId = t.Location.StartsWith(Shell.AppsFolder, StringComparison.OrdinalIgnoreCase) ? null : t.AppId,
+        };
+        Prepare(it);
+        var pins = Pins;
+        pins.Add(it);
+        var transients = Transients;
+        transients.Remove(t);
+        Rebuild(pins, transients);
+        SaveItems();
+        RefreshRunning();
+    }
+
+    static void CloseAll(DockItem it)
+    {
+        foreach (var h in it.Windows) Native.PostMessage(h, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
     }
 
     void SaveItems()
     {
-        _cfg.Items = _items.Where(i => i.IsPinned).ToList();
+        _cfg.Items = Pins;
         _cfg.Save();
     }
 
@@ -223,6 +319,7 @@ public sealed class DockWindow : Window
         var work = mi.rcWork;
         Fit((Horizontal ? work.Right - work.Left : work.Bottom - work.Top) / s);
         var outer = _appBar?.Reserve(mi.rcMonitor, _cfg.Position, ReserveThickness()) ?? work;
+        _length = (Horizontal ? work.Right - work.Left : work.Bottom - work.Top) / s;
 
         double cross = Math.Ceiling(EdgeGap + PadEdge + Base * Math.Max(Mag, 1) + Base * 0.5 + (Horizontal ? 46 : 240));
         double wl = work.Left / s, wt = work.Top / s, ww = (work.Right - work.Left) / s, wh = (work.Bottom - work.Top) / s;
@@ -238,6 +335,15 @@ public sealed class DockWindow : Window
         foreach (var it in _items) it.Size = it.GoalSize = Base;
         _shift = 0;
         Kick();
+    }
+
+    /// <summary>Re-fits after items come or go; only redoes the whole layout if the icon size changed.</summary>
+    void Refit()
+    {
+        if (_length <= 0) { Kick(); return; }
+        double old = _base;
+        Fit(_length);
+        if (Math.Abs(old - _base) > 0.01) ApplyLayout(); else Kick();
     }
 
     int ReserveThickness() => _cfg.AutoHide ? 0 : (int)Math.Ceiling((EdgeGap + PlateDepth + ReserveGap) * _dpi);
@@ -286,6 +392,18 @@ public sealed class DockWindow : Window
 
     double BaseSlot(DockItem it) => it.IsSeparator ? SepSlot : Base + Spacing;
     static double CurSlot(DockItem it) => it.IsSeparator ? SepSlot : it.Size + Spacing;
+
+    const double IconCanvas = 192;
+
+    /// <summary>Positions a fixed-size element and scales it to fill <paramref name="r"/>.</summary>
+    static void PlaceScaled(FrameworkElement el, Rect r)
+    {
+        Canvas.SetLeft(el, r.X);
+        Canvas.SetTop(el, r.Y);
+        var st = (ScaleTransform)el.RenderTransform;
+        st.ScaleX = r.Width / el.Width;
+        st.ScaleY = r.Height / el.Height;
+    }
 
     static void Place(FrameworkElement el, Rect r)
     {
@@ -375,7 +493,7 @@ public sealed class DockWindow : Window
 
             if (it.IsSeparator)
             {
-                Place(_sepLine, ToWin(mc - 0.5, mc + 0.5, iconBase + B * 0.18, iconBase + B * 0.82));
+                PlaceScaled(it.SepLine!, ToWin(mc - 0.5, mc + 0.5, iconBase + B * 0.18, iconBase + B * 0.82));
                 continue;
             }
 
@@ -383,10 +501,11 @@ public sealed class DockWindow : Window
             double bounce = BounceOffset(it, now);
             if (it.BounceStart != 0) moving = true;
 
-            Place(it.Img!, ToWin(mc - it.Size / 2, mc + it.Size / 2, iconBase + bounce, iconBase + bounce + it.Size));
+            PlaceScaled(it.Img!, ToWin(mc - it.Size / 2, mc + it.Size / 2, iconBase + bounce, iconBase + bounce + it.Size));
             double dc = EdgeGap + cOff + PadEdge / 2;
             Place(it.Dot!, ToWin(mc - 2, mc + 2, dc - 2, dc + 2));
             it.Dot!.Visibility = it.IsRunning ? Visibility.Visible : Visibility.Hidden;
+            it.Dot.Fill = it.Attention ? AttentionBrush : _dotBrush;
             it.Img!.Opacity = _dragging && it == _pressItem && _removeArmed ? 0.35 : 1;
         }
 
@@ -423,7 +542,12 @@ public sealed class DockWindow : Window
     {
         if (it.BounceStart == 0) return 0;
         double t = (now - it.BounceStart) / (double)Stopwatch.Frequency / 0.85;
-        if (t >= 1) { it.BounceStart = 0; return 0; }
+        if (t >= 1)
+        {
+            if (it.BouncesLeft > 0) { it.BouncesLeft--; it.BounceStart = now; return 0; }
+            it.BounceStart = 0;
+            return 0;
+        }
         double v = t < 0.55 ? Math.Sin(Math.PI * t / 0.55) : Math.Sin(Math.PI * (t - 0.55) / 0.45) * 0.35;
         return Base * 0.45 * v;
     }
@@ -486,7 +610,8 @@ public sealed class DockWindow : Window
         _shine.BorderBrush = light ? Theme.Vertical(0xCCFFFFFFu, 0x33FFFFFFu) : Theme.Vertical(0x38FFFFFFu, 0x0DFFFFFFu);
         ((DropShadowEffect)_shadow.Effect).Opacity = light ? 0.22 : 0.45;
 
-        _sepLine.Background = Theme.Brush(light ? 0x29000000u : 0x38FFFFFFu);
+        _sepBrush = Theme.Brush(light ? 0x29000000u : 0x38FFFFFFu);
+        foreach (var it in new[] { _sep, _sepRun }) if (it.SepLine != null) it.SepLine.Background = _sepBrush;
         _dotBrush = Theme.Brush(light ? 0xA6000000u : 0xE6FFFFFFu);
         foreach (var it in _items) if (it.Dot != null) it.Dot.Fill = _dotBrush;
 
@@ -569,7 +694,7 @@ public sealed class DockWindow : Window
         _removeArmed = c > EdgeGap + PlateDepth + Base * 1.4;
         if (!_removeArmed)
         {
-            int target = _items.Count(i => i.IsPinned && i != it && i.CenterM < m);
+            int target = PinStart + _items.Count(i => i.IsPinned && i != it && i.CenterM < m);
             int current = _items.IndexOf(it);
             if (target != current)
             {
@@ -600,7 +725,7 @@ public sealed class DockWindow : Window
             foreach (var p in paths)
                 if (AddPinned(p, index)) index++;
             SaveItems();
-            ApplyLayout();
+            RefreshRunning();
         }
         e.Handled = true;
         EndHover();
@@ -610,17 +735,23 @@ public sealed class DockWindow : Window
 
     void Activate(DockItem it, bool newInstance)
     {
+        if (it.IsStart)
+        {
+            Native.OpenStart();
+            return;
+        }
         if (it.IsTrash)
         {
             if (Start("explorer.exe", "shell:RecycleBinFolder")) Bounce(it);
             return;
         }
 
-        if (!newInstance && it.MatchName != null)
+        it.Attention = false;
+        it.BouncesLeft = 0;
+        if (!newInstance)
         {
-            var wins = WindowList.Get()
-                .Where(w => string.Equals(w.Process, it.MatchName, StringComparison.OrdinalIgnoreCase))
-                .Select(w => w.Handle).ToList();
+            RefreshRunning();
+            var wins = it.Windows;
             if (wins.Count > 0)
             {
                 var fg = Native.GetForegroundWindow();
@@ -680,13 +811,25 @@ public sealed class DockWindow : Window
         var it = ItemAt(FromWin(e.GetPosition(_root)).M);
         var menu = new ContextMenu { PlacementTarget = _root, Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint, HorizontalOffset = -12, VerticalOffset = -8 };
 
-        if (it is { IsPinned: true })
+        if (it is { IsApp: true })
         {
-            menu.Items.Add(Item(it.IsRunning ? "New window" : "Open", () => Activate(it, newInstance: true)));
+            // Like the Mac: the app's open windows first, then actions.
+            RefreshRunning();
+            foreach (var h in it.Windows.Take(12))
+            {
+                string title = Native.WindowTitle(h);
+                if (title.Length > 60) title = title[..57] + "…";
+                menu.Items.Add(Item(title.Replace("_", "__"), () => Native.Focus(h)));
+            }
+            if (it.Windows.Count > 0) menu.Items.Add(new Separator());
+
+            menu.Items.Add(Item(it.Windows.Count > 0 ? "New window" : "Open", () => Activate(it, newInstance: true)));
             if (File.Exists(it.Location) || Directory.Exists(it.Location))
                 menu.Items.Add(Item("Show in File Explorer", () => Start("explorer.exe", $"/select,\"{it.Location}\"")));
             menu.Items.Add(new Separator());
-            menu.Items.Add(Item("Remove from Dock", () => Unpin(it)));
+            menu.Items.Add(it.IsPinned ? Item("Remove from Dock", () => Unpin(it)) : Item("Keep in Dock", () => KeepInDock(it)));
+            if (it.Windows.Count > 0)
+                menu.Items.Add(Item(it.Windows.Count == 1 ? "Close window" : "Close all windows", () => CloseAll(it)));
         }
         else if (it is { IsTrash: true })
         {
@@ -700,8 +843,26 @@ public sealed class DockWindow : Window
             AddDockMenu(menu);
         }
 
-        menu.Opened += (_, _) => { _menuOpen = true; Kick(); };
-        menu.Closed += (_, _) => { _menuOpen = false; _lastOver = DateTime.Now; };
+        // The dock never activates, so WinDockIt is never the foreground app, and a menu only hears
+        // about clicks elsewhere when its app is in the foreground. So, like a tray icon's menu, make
+        // the dock foreground just before the menu opens (allowed: the user just clicked it), and hand
+        // focus back afterwards if nothing else took it. Doing this after opening would steal the
+        // menu's mouse capture and close it at once.
+        IntPtr previous = Native.GetForegroundWindow();
+        Native.SetForegroundWindow(_hwnd);
+        menu.Opened += (_, _) =>
+        {
+            _menuOpen = true;
+            menu.Focus();
+            Kick();
+        };
+        menu.Closed += (_, _) =>
+        {
+            _menuOpen = false;
+            _lastOver = DateTime.Now;
+            Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out uint pid);
+            if (pid == Environment.ProcessId && previous != IntPtr.Zero && previous != _hwnd) Native.SetForegroundWindow(previous);
+        };
         menu.IsOpen = true;
     }
 
@@ -719,6 +880,7 @@ public sealed class DockWindow : Window
             SizeItem("Small", 36), SizeItem("Medium", 46), SizeItem("Large", 56), SizeItem("Extra large", 68)));
         menu.Items.Add(Sub("Magnification",
             MagItem("Off", 1), MagItem("Subtle", 1.35), MagItem("Medium", 1.75), MagItem("Large", 2.1)));
+        menu.Items.Add(Item("Show Start button", () => { _cfg.ShowStart = !_cfg.ShowStart; _cfg.Save(); Rebuild(Pins, Transients); }, _cfg.ShowStart));
         menu.Items.Add(Item("Automatically hide", () => { _cfg.AutoHide = !_cfg.AutoHide; _cfg.Save(); ApplyLayout(); }, _cfg.AutoHide));
         menu.Items.Add(Item("Start with Windows", () => SetStartup(!IsStartup), IsStartup));
         menu.Items.Add(new Separator());
@@ -751,28 +913,30 @@ public sealed class DockWindow : Window
             InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms),
         };
         if (dlg.ShowDialog() != true) return;
-        int index = PinnedCount;
+        int index = Pins.Count;
         foreach (var f in dlg.FileNames)
             if (AddPinned(f, index)) index++;
         SaveItems();
-        ApplyLayout();
+        RefreshRunning();
     }
 
     /// <summary>Adds the taskbar's pinned apps, in taskbar order, skipping any already on the dock.</summary>
     void ImportTaskbar()
     {
-        var have = new HashSet<string>(_items.Where(i => i.IsPinned).Select(i => Shell.IdentityKey(i.Location)));
-        int index = PinnedCount, added = 0;
+        var pins = Pins;
+        var have = new HashSet<string>(pins.Select(i => Shell.IdentityKey(i.Location)));
+        int added = 0;
         foreach (var it in TaskbarPins.Read())
         {
             if (!have.Add(Shell.IdentityKey(it.Location))) continue;
             Prepare(it);
-            _items.Insert(index++, it);
+            pins.Add(it);
             added++;
         }
         if (added == 0) return;
+        Rebuild(pins, Transients);
         SaveItems();
-        ApplyLayout();
+        RefreshRunning();
     }
 
     static bool IsStartup
@@ -860,13 +1024,8 @@ public sealed class DockWindow : Window
     /// <summary>Running indicators and the Recycle Bin's full/empty icon.</summary>
     void SlowTick()
     {
-        var running = new HashSet<string>(WindowList.Get().Select(w => w.Process), StringComparer.OrdinalIgnoreCase);
+        RefreshRunning();
         bool changed = false;
-        foreach (var it in _items.Where(i => i.IsPinned))
-        {
-            bool r = it.MatchName != null && running.Contains(it.MatchName);
-            if (r != it.IsRunning) { it.IsRunning = r; changed = true; }
-        }
 
         long n = Shell.RecycleBinCount();
         if (_trashCount < 0 || (n == 0) != (_trashCount == 0))
@@ -877,5 +1036,104 @@ public sealed class DockWindow : Window
         _trashCount = n;
 
         if (changed) Kick();
+    }
+
+    // ───────────────────────── running apps ─────────────────────────
+
+    /// <summary>
+    /// Assigns every open window to a dock icon, the way the taskbar groups its buttons: a pinned
+    /// item with the same app ID, else one that runs the same exe. Windows nothing claims become
+    /// running-only icons after the pinned ones.
+    /// </summary>
+    void RefreshRunning()
+    {
+        if (_dragging) return;
+        var windows = WindowList.Get();
+        var pins = Pins;
+        var groups = new Dictionary<string, List<AppWindow>>();
+        foreach (var it in _items) it.Windows = new();
+
+        foreach (var w in windows)
+        {
+            if (OwnerOf(pins, w) is { } owner) { owner.Windows.Add(w.Handle); continue; }
+            if (!groups.TryGetValue(w.GroupKey, out var g)) groups[w.GroupKey] = g = new();
+            g.Add(w);
+        }
+
+        // Keep existing running-only icons in place; new ones join at the end, as on the Mac.
+        var old = Transients;
+        var transients = old.Where(t => groups.ContainsKey(t.GroupKey!)).ToList();
+        foreach (var (key, ws) in groups)
+        {
+            var t = transients.FirstOrDefault(x => x.GroupKey == key);
+            if (t == null)
+            {
+                var (name, location, args, icon) = Shell.DescribeRunning(ws[0]);
+                t = new DockItem { IsTransient = true, GroupKey = key, Name = name, Location = location, Arguments = args, Icon = icon, AppId = ws[0].Aumid };
+                Prepare(t);
+                transients.Add(t);
+            }
+            t.Windows = ws.Select(w => w.Handle).ToList();
+        }
+        if (!transients.SequenceEqual(old)) Rebuild(pins, transients);
+
+        bool changed = false;
+        foreach (var it in _items.Where(i => i.IsApp))
+        {
+            bool running = it.Windows.Count > 0;
+            if (running != it.IsRunning) { it.IsRunning = running; changed = true; }
+            if (!running && it.Attention) { it.Attention = false; changed = true; }
+        }
+        if (changed) Kick();
+    }
+
+    static DockItem? OwnerOf(List<DockItem> pins, AppWindow w)
+    {
+        static bool Eq(string? a, string? b) => !string.IsNullOrEmpty(a) && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+        return pins.FirstOrDefault(p => Eq(p.ProcessName, w.ProcessName))
+            ?? pins.FirstOrDefault(p => Eq(p.AppId, w.Aumid))
+            // A window without its own app ID belongs to whatever runs its exe. One with an app ID only
+            // falls back to a pin that has none, so e.g. an Edge web app doesn't light up Edge.
+            ?? pins.FirstOrDefault(p => Eq(p.ExePath, w.ExePath) && (w.Aumid == null || p.AppId == null));
+    }
+
+    IntPtr ShellHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (_shellHookMsg == 0 || msg != _shellHookMsg) return IntPtr.Zero;
+        int code = wParam.ToInt32();
+        switch (code & 0x7FFF)
+        {
+            case 1: // HSHELL_WINDOWCREATED
+            case 2: // HSHELL_WINDOWDESTROYED
+                _refreshSoon.Stop();
+                _refreshSoon.Start();
+                break;
+            case 4: // HSHELL_WINDOWACTIVATED (and RUDEAPPACTIVATED): the user has seen it
+                foreach (var it in _items.Where(i => i.Attention && i.Windows.Contains(lParam)))
+                {
+                    it.Attention = false;
+                    it.BouncesLeft = 0;
+                    Kick();
+                }
+                break;
+            case 6 when (code & 0x8000) != 0: // HSHELL_FLASH: a window wants attention
+                Flash(lParam);
+                break;
+        }
+        return IntPtr.Zero;
+    }
+
+    void Flash(IntPtr h)
+    {
+        var it = _items.FirstOrDefault(i => i.Windows.Contains(h));
+        if (it == null)
+        {
+            RefreshRunning();
+            it = _items.FirstOrDefault(i => i.Windows.Contains(h));
+        }
+        if (it == null || it.Attention) return;
+        it.Attention = true;   // the dot turns orange until the window is activated
+        it.BouncesLeft = 2;
+        Bounce(it);
     }
 }

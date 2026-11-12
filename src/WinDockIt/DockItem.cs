@@ -14,13 +14,26 @@ public sealed class DockItem
     public string? Arguments { get; set; }
     /// <summary>Optional override for running-app detection (process name without ".exe").</summary>
     public string? ProcessName { get; set; }
+    /// <summary>Optional app ID (AppUserModelID) its windows carry, when the location alone doesn't say.</summary>
+    public string? AppUserModelId { get; set; }
 
     // ---- Runtime only (fields are not serialized) ----
     [JsonIgnore] public bool IsSeparator { get; init; }
     [JsonIgnore] public bool IsTrash { get; init; }
-    [JsonIgnore] public bool IsPinned => !IsSeparator && !IsTrash;
+    /// <summary>The Start button.</summary>
+    [JsonIgnore] public bool IsStart { get; init; }
+    /// <summary>A running app that isn't pinned; it leaves the dock when its last window closes.</summary>
+    [JsonIgnore] public bool IsTransient { get; init; }
+    [JsonIgnore] public bool IsPinned => !IsSeparator && !IsTrash && !IsStart && !IsTransient;
+    /// <summary>Something that can have windows: pinned or running apps.</summary>
+    [JsonIgnore] public bool IsApp => IsPinned || IsTransient;
 
-    internal string? MatchName;
+    internal string? AppId, ExePath;          // identity used to match windows (see WindowList)
+    internal string? GroupKey;                // transient items: which window group they stand for
+    internal List<IntPtr> Windows = new();    // open windows, top-most first
+    internal bool Attention;                  // a window flashed and hasn't been looked at yet
+    internal int BouncesLeft;
+    internal System.Windows.Controls.Border? SepLine;
     internal ImageSource? Icon;
     internal Image? Img;
     internal Ellipse? Dot;
