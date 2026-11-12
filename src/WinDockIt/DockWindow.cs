@@ -26,6 +26,8 @@ public sealed class DockWindow : Window
     const double PadMain = 7;    // glass padding at each end
     const double Spacing = 6;    // space between icons
     const double SepSlot = 17;   // width of the divider slot
+    const double ReserveGap = 6; // space kept between the glass and maximized windows
+    const double MinIcon = 16;   // smallest icons get when shrinking to fit
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     const string AppName = "WinDockIt";
 
@@ -49,6 +51,7 @@ public sealed class DockWindow : Window
     };
     readonly TextBlock _labelText = new() { FontSize = 12.5 };
     readonly GlassBackdrop _plate = new();
+    AppBar? _appBar;
     readonly DispatcherTimer _fastTimer, _slowTimer;
     Brush _dotBrush = Brushes.Black;
 
@@ -63,7 +66,10 @@ public sealed class DockWindow : Window
     DateTime _lastOver = DateTime.Now;
     long _trashCount = -1;
 
-    double Base => _cfg.IconSize;
+    double _base;
+
+    /// <summary>Icon size actually used: the configured size, or smaller if that's what it takes to fit the screen.</summary>
+    double Base => _base;
     double Mag => _cfg.Magnification;
     double PlateDepth => PadEdge + Base + PadOuter;
     bool Horizontal => _cfg.Position is DockPosition.Bottom or DockPosition.Top;
@@ -71,6 +77,7 @@ public sealed class DockWindow : Window
     public DockWindow()
     {
         _cfg = DockConfig.Load();
+        _base = _cfg.IconSize;
 
         Title = AppName;
         WindowStyle = WindowStyle.None;
@@ -121,14 +128,16 @@ public sealed class DockWindow : Window
         {
             _hwnd = new WindowInteropHelper(this).Handle;
             Native.AddExStyle(_hwnd, Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE);
+            _appBar = new AppBar(_hwnd);
+            _appBar.Changed += () => Dispatcher.InvokeAsync(ApplyLayout);
+            ApplyLayout();
         };
         Loaded += (_, _) =>
         {
-            _dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
             SlowTick();
             Kick();
         };
-        DpiChanged += (_, e) => { _dpi = e.NewDpi.DpiScaleX; Kick(); };
+        DpiChanged += (_, _) => ApplyLayout();
         SizeChanged += (_, _) => Kick();
 
         ApplyTheme();
@@ -138,6 +147,9 @@ public sealed class DockWindow : Window
     /// <summary>The icon window is owned by the glass window, which keeps it stacked directly above the glass.</summary>
     public void Start()
     {
+        // Give the reserved screen space back however we exit.
+        Application.Current.Exit += (_, _) => _appBar?.Dispose();
+        AppDomain.CurrentDomain.UnhandledException += (_, _) => _appBar?.Dispose();
         _plate.Show();
         new WindowInteropHelper(this).Owner = _plate.Handle;
         Show();
@@ -165,7 +177,8 @@ public sealed class DockWindow : Window
 
     bool AddPinned(string path, int index)
     {
-        if (_items.Any(i => i.IsPinned && string.Equals(i.Location, path, StringComparison.OrdinalIgnoreCase))) return false;
+        string key = Shell.IdentityKey(path);
+        if (_items.Any(i => i.IsPinned && Shell.IdentityKey(i.Location) == key)) return false;
         var it = new DockItem { Name = Shell.DisplayName(path), Location = path };
         Prepare(it);
         _items.Insert(Math.Clamp(index, 0, PinnedCount), it);
@@ -179,7 +192,7 @@ public sealed class DockWindow : Window
         _itemLayer.Children.Remove(it.Dot);
         if (_hovered == it) _hovered = null;
         SaveItems();
-        Kick();
+        ApplyLayout();
     }
 
     void SaveItems()
@@ -190,22 +203,65 @@ public sealed class DockWindow : Window
 
     // ───────────────────────── layout ─────────────────────────
 
+    /// <summary>
+    /// Positions the dock on the primary screen and reserves its strip of the screen, so other
+    /// windows maximize up to the dock rather than underneath it (nothing is reserved when auto-hiding).
+    /// </summary>
     void ApplyLayout()
     {
-        var wa = SystemParameters.WorkArea;
+        if (_hwnd == IntPtr.Zero) return;
+
+        var mon = Native.MonitorFromPoint(default, Native.MONITOR_DEFAULTTOPRIMARY);
+        if (!TryMonitor(mon, out var mi)) return;
+        if (Native.GetDpiForMonitor(mon, 0, out uint dpiX, out _) == 0) _dpi = dpiX / 96.0;
+        double s = _dpi;
+
+        // Reserve first (switching edges frees the old strip), then size the icons to the space
+        // left along the dock, then reserve again in case the icon size, and so the depth, changed.
+        _appBar?.Reserve(mi.rcMonitor, _cfg.Position, ReserveThickness());
+        if (!TryMonitor(mon, out mi)) return;
+        var work = mi.rcWork;
+        Fit((Horizontal ? work.Right - work.Left : work.Bottom - work.Top) / s);
+        var outer = _appBar?.Reserve(mi.rcMonitor, _cfg.Position, ReserveThickness()) ?? work;
+
         double cross = Math.Ceiling(EdgeGap + PadEdge + Base * Math.Max(Mag, 1) + Base * 0.5 + (Horizontal ? 46 : 240));
+        double wl = work.Left / s, wt = work.Top / s, ww = (work.Right - work.Left) / s, wh = (work.Bottom - work.Top) / s;
 
         switch (_cfg.Position)
         {
-            case DockPosition.Bottom: Left = wa.Left; Top = wa.Bottom - cross; Width = wa.Width; Height = cross; break;
-            case DockPosition.Top: Left = wa.Left; Top = wa.Top; Width = wa.Width; Height = cross; break;
-            case DockPosition.Left: Left = wa.Left; Top = wa.Top; Width = cross; Height = wa.Height; break;
-            case DockPosition.Right: Left = wa.Right - cross; Top = wa.Top; Width = cross; Height = wa.Height; break;
+            case DockPosition.Bottom: Left = wl; Top = outer.Bottom / s - cross; Width = ww; Height = cross; break;
+            case DockPosition.Top: Left = wl; Top = outer.Top / s; Width = ww; Height = cross; break;
+            case DockPosition.Left: Left = outer.Left / s; Top = wt; Width = cross; Height = wh; break;
+            case DockPosition.Right: Left = outer.Right / s - cross; Top = wt; Width = cross; Height = wh; break;
         }
 
         foreach (var it in _items) it.Size = it.GoalSize = Base;
         _shift = 0;
         Kick();
+    }
+
+    int ReserveThickness() => _cfg.AutoHide ? 0 : (int)Math.Ceiling((EdgeGap + PlateDepth + ReserveGap) * _dpi);
+
+    static bool TryMonitor(IntPtr mon, out Native.MONITORINFO mi)
+    {
+        mi = new Native.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MONITORINFO>() };
+        return Native.GetMonitorInfo(mon, ref mi);
+    }
+
+    /// <summary>
+    /// Like the Mac Dock: never scroll, just shrink every icon evenly until everything fits,
+    /// leaving room for the magnified row so it stays on screen too.
+    /// </summary>
+    void Fit(double length)
+    {
+        int n = _items.Count(i => !i.IsSeparator);
+        if (n == 0) { _base = _cfg.IconSize; return; }
+        double avail = length - 2 * (EdgeGap + PadMain);
+        double seps = _items.Count(i => i.IsSeparator) * SepSlot;
+        // Cosine magnification adds about 2.4 icons' worth of (Mag - 1) to the row's length.
+        double growth = 2.4 * Math.Max(Mag - 1, 0);
+        double fit = (avail - seps - n * Spacing) / (n + growth);
+        _base = Math.Clamp(Math.Floor(fit), MinIcon, _cfg.IconSize);
     }
 
     Rect ToWin(double m0, double m1, double c0, double c1)
@@ -306,6 +362,8 @@ public sealed class DockWindow : Window
 
         // 4) Place everything.
         double m = L / 2 - w1 / 2 + _shift;
+        double lo = EdgeGap + PadMain, hi = L - EdgeGap - PadMain - w1;
+        m = hi >= lo ? Math.Clamp(m, lo, hi) : L / 2 - w1 / 2; // keep the whole row on screen
         double pm0 = m - PadMain, pm1 = m + w1 + PadMain, pc0 = EdgeGap + cOff, pc1 = pc0 + PlateDepth;
         double iconBase = EdgeGap + cOff + PadEdge, maxSize = B;
 
@@ -542,6 +600,7 @@ public sealed class DockWindow : Window
             foreach (var p in paths)
                 if (AddPinned(p, index)) index++;
             SaveItems();
+            ApplyLayout();
         }
         e.Handled = true;
         EndHover();
@@ -649,6 +708,7 @@ public sealed class DockWindow : Window
     void AddDockMenu(ContextMenu menu)
     {
         menu.Items.Add(Item("Add app…", AddApps));
+        menu.Items.Add(Item("Import from taskbar", ImportTaskbar));
         menu.Items.Add(new Separator());
         menu.Items.Add(Sub("Position",
             Item("Bottom", () => SetPosition(DockPosition.Bottom), _cfg.Position == DockPosition.Bottom),
@@ -659,7 +719,7 @@ public sealed class DockWindow : Window
             SizeItem("Small", 36), SizeItem("Medium", 46), SizeItem("Large", 56), SizeItem("Extra large", 68)));
         menu.Items.Add(Sub("Magnification",
             MagItem("Off", 1), MagItem("Subtle", 1.35), MagItem("Medium", 1.75), MagItem("Large", 2.1)));
-        menu.Items.Add(Item("Automatically hide", () => { _cfg.AutoHide = !_cfg.AutoHide; _cfg.Save(); }, _cfg.AutoHide));
+        menu.Items.Add(Item("Automatically hide", () => { _cfg.AutoHide = !_cfg.AutoHide; _cfg.Save(); ApplyLayout(); }, _cfg.AutoHide));
         menu.Items.Add(Item("Start with Windows", () => SetStartup(!IsStartup), IsStartup));
         menu.Items.Add(new Separator());
         menu.Items.Add(Item("Open settings folder", () => Start(DockConfig.Folder, null)));
@@ -695,7 +755,24 @@ public sealed class DockWindow : Window
         foreach (var f in dlg.FileNames)
             if (AddPinned(f, index)) index++;
         SaveItems();
-        Kick();
+        ApplyLayout();
+    }
+
+    /// <summary>Adds the taskbar's pinned apps, in taskbar order, skipping any already on the dock.</summary>
+    void ImportTaskbar()
+    {
+        var have = new HashSet<string>(_items.Where(i => i.IsPinned).Select(i => Shell.IdentityKey(i.Location)));
+        int index = PinnedCount, added = 0;
+        foreach (var it in TaskbarPins.Read())
+        {
+            if (!have.Add(Shell.IdentityKey(it.Location))) continue;
+            Prepare(it);
+            _items.Insert(index++, it);
+            added++;
+        }
+        if (added == 0) return;
+        SaveItems();
+        ApplyLayout();
     }
 
     static bool IsStartup

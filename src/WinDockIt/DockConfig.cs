@@ -80,7 +80,15 @@ public sealed class DockConfig
                 i.Location = TerminalApp;
     }
 
+    /// <summary>First run: start from the user's taskbar pins if there are any, otherwise a sensible set.</summary>
     static List<DockItem> Defaults()
+    {
+        var pins = TaskbarPins.Read();
+        if (pins.Count > 0) return pins;
+        return BuiltInDefaults();
+    }
+
+    static List<DockItem> BuiltInDefaults()
     {
         string win = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);

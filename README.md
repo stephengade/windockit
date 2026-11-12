@@ -9,6 +9,9 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 - **Frosted glass.** Real blur of whatever is behind the dock, with smooth rounded corners. It follows your Windows light/dark theme and the *Transparency effects* setting.
 - **Magnification.** Icons swell smoothly as you move across them. The icon under your cursor stays put.
 - **Any edge.** Bottom, top, left or right, switchable from the dock's menu.
+- **Its own space.** Like the Mac Dock, it reserves its strip of the screen, so maximized and snapped windows stop at the dock instead of going underneath it.
+- **Always fits.** No scrolling: when there are too many items, every icon shrinks evenly until the whole dock fits.
+- **Import from taskbar.** Brings over your pinned taskbar apps, in order, including Store apps. On first run the dock starts with them.
 - **Running indicators.** A dot under every app with an open window.
 - **Click to switch.** Clicking a running app brings it forward. Click again to minimize it. If the app has several windows, clicking cycles through them.
 - **Launch bounce.** Icons hop when an app starts.
@@ -28,6 +31,7 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 | App options | Right-click an icon |
 | Dock settings (position, size, magnification, auto-hide) | Right-click an empty part of the dock |
 | Pin something | Drag it onto the dock |
+| Bring over your taskbar apps | Right-click an empty part of the dock › Import from taskbar |
 | Reorder | Drag an icon along the dock |
 | Unpin | Drag an icon off the dock, or right-click › Remove from Dock |
 
@@ -76,6 +80,8 @@ All layout happens by hand each frame, in "dock space": distance *along* the doc
 | --- | --- |
 | `DockWindow.cs` | Layout, magnification, animation, input, menus |
 | `GlassBackdrop.cs` | Frosted glass via Windows.UI.Composition |
+| `AppBar.cs` | Reserves the dock's screen space, like the taskbar does |
+| `TaskbarPins.cs` | Reads the taskbar's pinned apps for import |
 | `Shell.cs` | High-res shell icons, shortcut targets, Recycle Bin |
 | `WindowList.cs` | Finds open app windows (running dots, click-to-switch) |
 | `DockConfig.cs` | Settings and default pinned apps |

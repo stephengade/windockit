@@ -142,7 +142,9 @@ internal static class Shell
         return Path.GetFileNameWithoutExtension(path);
     }
 
-    public static string? ResolveShortcut(string lnk)
+    public static string? ResolveShortcut(string lnk) => ReadShortcut(lnk)?.Target;
+
+    static (string Target, string Args)? ReadShortcut(string lnk)
     {
         try
         {
@@ -150,10 +152,25 @@ internal static class Shell
             if (type == null) return null;
             dynamic sh = Activator.CreateInstance(type)!;
             dynamic sc = sh.CreateShortcut(lnk);
-            string target = sc.TargetPath;
-            return string.IsNullOrEmpty(target) ? null : target;
+            string target = sc.TargetPath, args = sc.Arguments;
+            return string.IsNullOrEmpty(target) ? null : (target, args ?? "");
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// What an item actually opens: a shortcut's target and arguments, otherwise its location.
+    /// Used to avoid pinning the same app twice.
+    /// </summary>
+    public static string IdentityKey(string location)
+    {
+        if (location.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) && ReadShortcut(location) is { } s)
+        {
+            // Windows tags taskbar shortcuts with where they came from; that doesn't change what they open.
+            string args = System.Text.RegularExpressions.Regex.Replace(s.Args, @"--source-shortcut-location=\S*", "").Trim();
+            return $"{s.Target}|{args}".ToLowerInvariant();
+        }
+        return $"{location}|".ToLowerInvariant();
     }
 
     /// <summary>Process name used to decide whether a pinned item is running.</summary>
