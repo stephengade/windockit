@@ -106,6 +106,14 @@ internal sealed class AppBar : IDisposable
         return IntPtr.Zero;
     }
 
+    /// <summary>Explorer restarted and forgot every app bar: register again.</summary>
+    public void Reset()
+    {
+        var d = Data();
+        _registered = SHAppBarMessage(ABM_NEW, ref d) != UIntPtr.Zero;
+        _last = null;
+    }
+
     public void Dispose()
     {
         if (!_registered) return;

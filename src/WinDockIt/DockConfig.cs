@@ -12,6 +12,9 @@ public sealed class DockConfig
     public double Magnification { get; set; } = 1.75;
     public bool AutoHide { get; set; }
     public bool ShowStart { get; set; } = true;
+    public bool HideTaskbar { get; set; }
+    /// <summary>The taskbar's own auto-hide setting before WinDockIt hid it; set only while it's hidden.</summary>
+    public bool? TaskbarWasAutoHide { get; set; }
     public List<DockItem> Items { get; set; } = new();
 
     public static string Folder =>

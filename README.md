@@ -16,6 +16,7 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 - **Every open app.** Running apps that aren't pinned appear after a divider, and leave when you close them. Right-click › **Keep in Dock** pins one. Windows are grouped by app the same way the taskbar groups them, so web apps and Store apps get their own icons.
 - **Asks for attention.** When an app flashes for attention, its icon bounces and its dot turns orange until you look.
 - **Start button.** Opens the Start menu. Can be hidden from the dock's menu.
+- **Replace the taskbar.** Optional: **Hide Windows taskbar** in the dock's menu. The taskbar comes back when WinDockIt quits, and a small watchdog brings it back even if WinDockIt crashes. While it's hidden, the system tray and clock are still available: Win+N opens notifications and the calendar, and Win+A opens quick settings.
 - **Click to switch.** Clicking a running app brings it forward. Click again to minimize it. If the app has several windows, clicking cycles through them.
 - **Launch bounce.** Icons hop when an app starts.
 - **Pin anything.** Drag apps, shortcuts, files or folders onto the dock, or use **Add app…**.
@@ -85,6 +86,7 @@ All layout happens by hand each frame, in "dock space": distance *along* the doc
 | `GlassBackdrop.cs` | Frosted glass via Windows.UI.Composition |
 | `AppBar.cs` | Reserves the dock's screen space, like the taskbar does |
 | `TaskbarPins.cs` | Reads the taskbar's pinned apps for import |
+| `TaskbarHider.cs` | Hides and restores the Windows taskbar, plus the crash watchdog |
 | `Shell.cs` | High-res shell icons, shortcut targets, Recycle Bin |
 | `WindowList.cs` | Finds open app windows and works out which app each belongs to |
 | `DockConfig.cs` | Settings and default pinned apps |

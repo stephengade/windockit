@@ -8,6 +8,14 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // Watchdog copy started when the taskbar is hidden: restores it if the dock dies.
+        if (e.Args.Length == 2 && e.Args[0] == "--watchdog" && int.TryParse(e.Args[1], out int pid))
+        {
+            TaskbarHider.RunWatchdog(pid);
+            Shutdown();
+            return;
+        }
+
         _mutex = new Mutex(true, "WinDockIt.SingleInstance", out bool created);
         if (!created)
         {

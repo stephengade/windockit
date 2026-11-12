@@ -56,7 +56,7 @@ public sealed class DockWindow : Window
     readonly DispatcherTimer _fastTimer, _slowTimer;
     Brush _dotBrush = Brushes.Black, _sepBrush = Brushes.Gray;
     static readonly Brush AttentionBrush = Theme.Brush(0xFFFF9F0Au);
-    uint _shellHookMsg;
+    uint _shellHookMsg, _taskbarCreatedMsg;
     double _length;               // length of the screen edge the dock sits on, in DIPs
     readonly DispatcherTimer _refreshSoon;
 
@@ -145,6 +145,7 @@ public sealed class DockWindow : Window
 
             // Shell hook: windows opening, closing, being activated and flashing for attention.
             _shellHookMsg = Native.RegisterWindowMessage("SHELLHOOK");
+            _taskbarCreatedMsg = Native.RegisterWindowMessage("TaskbarCreated");
             if (Native.RegisterShellHookWindow(_hwnd)) HwndSource.FromHwnd(_hwnd)?.AddHook(ShellHook);
             ApplyLayout();
         };
@@ -167,9 +168,17 @@ public sealed class DockWindow : Window
         Application.Current.Exit += (_, _) =>
         {
             _appBar?.Dispose();
+            TaskbarHider.Restore(_cfg);
             if (_hwnd != IntPtr.Zero) Native.DeregisterShellHookWindow(_hwnd);
         };
-        AppDomain.CurrentDomain.UnhandledException += (_, _) => _appBar?.Dispose();
+        Application.Current.SessionEnding += (_, _) => TaskbarHider.Restore(_cfg);
+        AppDomain.CurrentDomain.UnhandledException += (_, _) =>
+        {
+            _appBar?.Dispose();
+            TaskbarHider.Restore(_cfg);
+        };
+        // Also undoes a hide left over from a crash, if the option has since been turned off.
+        if (_cfg.HideTaskbar) TaskbarHider.Hide(_cfg); else TaskbarHider.Restore(_cfg);
         _plate.Show();
         new WindowInteropHelper(this).Owner = _plate.Handle;
         Show();
@@ -880,6 +889,7 @@ public sealed class DockWindow : Window
             SizeItem("Small", 36), SizeItem("Medium", 46), SizeItem("Large", 56), SizeItem("Extra large", 68)));
         menu.Items.Add(Sub("Magnification",
             MagItem("Off", 1), MagItem("Subtle", 1.35), MagItem("Medium", 1.75), MagItem("Large", 2.1)));
+        menu.Items.Add(Item("Hide Windows taskbar", () => SetHideTaskbar(!_cfg.HideTaskbar), _cfg.HideTaskbar));
         menu.Items.Add(Item("Show Start button", () => { _cfg.ShowStart = !_cfg.ShowStart; _cfg.Save(); Rebuild(Pins, Transients); }, _cfg.ShowStart));
         menu.Items.Add(Item("Automatically hide", () => { _cfg.AutoHide = !_cfg.AutoHide; _cfg.Save(); ApplyLayout(); }, _cfg.AutoHide));
         menu.Items.Add(Item("Start with Windows", () => SetStartup(!IsStartup), IsStartup));
@@ -893,6 +903,14 @@ public sealed class DockWindow : Window
 
     MenuItem MagItem(string name, double mag) =>
         Item(name, () => { _cfg.Magnification = mag; _cfg.Save(); ApplyLayout(); }, Math.Abs(_cfg.Magnification - mag) < 0.01);
+
+    void SetHideTaskbar(bool hide)
+    {
+        _cfg.HideTaskbar = hide;
+        _cfg.Save();
+        if (hide) TaskbarHider.Hide(_cfg); else TaskbarHider.Restore(_cfg);
+        ApplyLayout();
+    }
 
     void SetPosition(DockPosition p)
     {
@@ -961,6 +979,7 @@ public sealed class DockWindow : Window
     /// <summary>Fullscreen detection and auto-hide.</summary>
     void FastTick()
     {
+        if (_cfg.HideTaskbar) TaskbarHider.KeepHidden();
         bool fs = IsForegroundFullscreen();
         if (fs != _fullscreen)
         {
@@ -1099,6 +1118,14 @@ public sealed class DockWindow : Window
 
     IntPtr ShellHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        if (_taskbarCreatedMsg != 0 && msg == _taskbarCreatedMsg)
+        {
+            // Explorer restarted: it forgot our reserved space and brought its taskbar back.
+            _appBar?.Reset();
+            if (_cfg.HideTaskbar) TaskbarHider.Hide(_cfg);
+            Dispatcher.InvokeAsync(ApplyLayout);
+            return IntPtr.Zero;
+        }
         if (_shellHookMsg == 0 || msg != _shellHookMsg) return IntPtr.Zero;
         int code = wParam.ToInt32();
         switch (code & 0x7FFF)
