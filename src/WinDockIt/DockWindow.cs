@@ -373,15 +373,23 @@ public sealed class DockWindow : Window
         _launchpad.Open();
     }
 
-    /// <summary>Where Launchpad should sit: the dock's shown rectangle and its screen's work area, in DIPs.</summary>
-    internal (Rect Dock, Rect Work, DockPosition Position, double Dpi) LaunchpadAnchor()
+    /// <summary>Where Launchpad goes: the dock's shown rectangle (DIPs), its whole screen (physical pixels), the edge and DPI.</summary>
+    internal (Rect Dock, Native.RECT Monitor, DockPosition Position, double Dpi) LaunchpadAnchor()
     {
         var r = ToWin(_plateM0, _plateM1, 0, EdgeGap + PlateDepth);
         var dock = new Rect(Left + r.X, Top + r.Y, r.Width, r.Height);
-        var work = SystemParameters.WorkArea;
-        if (TryMonitor(Native.MonitorFromWindow(_hwnd, Native.MONITOR_DEFAULTTONEAREST), out var mi))
-            work = new Rect(mi.rcWork.Left / _dpi, mi.rcWork.Top / _dpi, (mi.rcWork.Right - mi.rcWork.Left) / _dpi, (mi.rcWork.Bottom - mi.rcWork.Top) / _dpi);
-        return (dock, work, _cfg.Position, _dpi);
+        var mon = new Native.RECT { Right = (int)SystemParameters.PrimaryScreenWidth, Bottom = (int)SystemParameters.PrimaryScreenHeight };
+        if (TryMonitor(Native.MonitorFromWindow(_hwnd, Native.MONITOR_DEFAULTTONEAREST), out var mi)) mon = mi.rcMonitor;
+        return (dock, mon, _cfg.Position, _dpi);
+    }
+
+    /// <summary>Puts the dock back on top of Launchpad, so apps can be dragged onto it while Launchpad is open.</summary>
+    internal void RaiseAboveLaunchpad()
+    {
+        const uint flags = 0x1 | 0x2 | 0x10;   // NOSIZE | NOMOVE | NOACTIVATE
+        SetWindowPos(_plate.Handle, new IntPtr(-1) /* TOPMOST */, 0, 0, 0, 0, flags);
+        SetWindowPos(_hwnd, new IntPtr(-1), 0, 0, 0, 0, flags);
+        if (_hidden) Reveal();
     }
 
     internal List<DockItem> OverflowItems => _overflow.ToList();
@@ -509,7 +517,9 @@ public sealed class DockWindow : Window
         if (Math.Abs(oldLength - _length) > 0.5)
         {
             var pins = Pins;
-            if (PinsThatFit(pins.Count, Transients.Count) != _items.Count(i => i.IsPinned)) Rebuild(pins, Transients);
+            // Not now: we may be inside a layout pass, which mustn't see the icons change under it.
+            if (PinsThatFit(pins.Count, Transients.Count) != _items.Count(i => i.IsPinned))
+                Dispatcher.InvokeAsync(() => Rebuild(Pins, Transients), DispatcherPriority.Background);
         }
 
         double cross = Math.Ceiling(EdgeGap + PadEdge + Base * Math.Max(Mag, 1) + Base * 0.5 + (Horizontal ? 46 : 240));
@@ -1205,7 +1215,8 @@ public sealed class DockWindow : Window
 
         // Smart hide: step aside only while a window overlaps the dock (checked every other tick).
         if (_cfg.Hide == HideMode.Smart && ++_coverTick % 2 == 0) _covered = Covered();
-        bool wantHidden = _cfg.Hide == HideMode.Always || (_cfg.Hide == HideMode.Smart && _covered);
+        // While Launchpad is open the dock stays in view, like on the Mac.
+        bool wantHidden = _launchpad == null && (_cfg.Hide == HideMode.Always || (_cfg.Hide == HideMode.Smart && _covered));
         if (!wantHidden)
         {
             if (_hidden) Reveal();
@@ -1287,6 +1298,8 @@ public sealed class DockWindow : Window
     {
         var fg = Native.GetForegroundWindow();
         if (fg == IntPtr.Zero || fg == _hwnd || Native.IsZoomed(fg)) return false;
+        Native.GetWindowThreadProcessId(fg, out uint pid);
+        if (pid == Environment.ProcessId) return false;   // Launchpad fills the screen but isn't a game
         if (Native.ClassName(fg) is "Progman" or "WorkerW" or "Shell_TrayWnd") return false;
         if (!Native.GetWindowRect(fg, out var r)) return false;
 

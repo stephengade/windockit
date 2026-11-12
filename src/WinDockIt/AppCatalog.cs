@@ -46,7 +46,7 @@ internal static class AppCatalog
                 foreach (var a in apps)
                 {
                     if (a.Icon != null) continue;
-                    a.Icon = Shell.GetIcon(a.Location, 96);
+                    a.Icon = Shell.GetIcon(a.Location, 128);
                     lock (s_icons) s_icons[a.Location] = a.Icon;
                     // Show icons as they arrive, a batch at a time, rather than all at the end.
                     if (++pending == 40) { pending = 0; Changed?.Invoke(); }

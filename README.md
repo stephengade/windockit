@@ -15,7 +15,7 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 - **Running indicators.** A dot under every app with an open window.
 - **Every open app.** Running apps that aren't pinned appear after a divider, and leave when you close them. Right-click › **Keep in Dock** pins one. Windows are grouped by app the same way the taskbar groups them, so web apps and Store apps get their own icons.
 - **Asks for attention.** When an app flashes for attention, its icon bounces and its dot turns orange until you look.
-- **Launchpad.** The WinDockIt icon at the start of the dock (and at the top left of the status bar) opens a frosted sheet with all your apps. It shows pinned apps that didn't fit on the dock, apps that are open now, the ones you use most, and every app A–Z, Store apps included. Start typing to search; arrow keys and Enter open an app, and Esc closes it. Drag an app onto the dock to pin it, or right-click › **Keep in Dock**. Right-click the WinDockIt icon for the Windows Start menu.
+- **Launchpad.** The WinDockIt icon at the start of the dock (and at the top left of the status bar) fills the screen with all your apps in large icons over a blurred wallpaper, like the Mac. It shows pinned apps that didn't fit on the dock, Suggestions (apps that are open, then the ones you use most), and every app grouped A–Z, Store apps included. Hover or drag along the letter index on the right to jump through the alphabet, or use Page Up and Page Down. The dock stays on top while it's open. Start typing to search; arrow keys and Enter open an app. Esc or a click on an empty area closes it. Drag an app onto the dock to pin it, or right-click › **Keep in Dock**. Right-click the WinDockIt icon for the Windows Start menu.
 - **Status bar.** A thin frosted bar along the top of the screen, like the Mac menu bar. On the left: Launchpad and the name of the app you're in. Click the name to see that app's windows, or to hide or quit it. On the right: Wi-Fi, Bluetooth, volume, battery, quick settings, and the date and time. Each opens the matching Windows panel, and you can scroll over the volume icon to change it. By default the bar keeps its own strip of the screen. In Settings you can make it hide like the dock instead: *Smart* steps aside while a window covers it, and *Always* keeps it out of sight. Either way, rest the cursor at the top edge to bring it back. Turn it off with **Show status bar** in the dock's menu.
 - **Replace the taskbar.** Optional: **Hide Windows taskbar** in the dock's menu. The taskbar comes back when WinDockIt quits, and a small watchdog brings it back even if WinDockIt crashes. While it's hidden, the status bar shows the clock and system status.
 - **Click to switch.** Clicking a running app brings it forward. Click again to minimize it. If the app has several windows, clicking cycles through them.
@@ -92,7 +92,7 @@ All layout happens by hand each frame, in "dock space": distance *along* the doc
 | `GlassBackdrop.cs` | Frosted glass via Windows.UI.Composition |
 | `AppBar.cs` | Reserves the dock's screen space, like the taskbar does |
 | `TaskbarPins.cs` | Reads the taskbar's pinned apps for import |
-| `LaunchpadWindow.cs` | Launchpad: search, open and frequently used apps, all apps A–Z |
+| `LaunchpadWindow.cs` | Launchpad: search, suggestions, all apps A–Z with a letter index |
 | `AppCatalog.cs` | Lists every app in the Start menu (desktop and Store) with icons |
 | `SettingsWindow.cs` | The Settings window |
 | `StatusBar.cs` | The bar along the top: app name, status icons, clock |
