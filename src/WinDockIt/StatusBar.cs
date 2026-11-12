@@ -27,7 +27,7 @@ public sealed class StatusBar : Window
 
     readonly GlassBackdrop _glass = new();
     readonly Func<IntPtr, DockItem?> _itemFor;
-    readonly Action _hideBar;
+    readonly Action _hideBar, _openSettings;
     readonly DispatcherTimer _tick;
     AppBar? _appBar;
     IntPtr _hwnd;
@@ -68,8 +68,9 @@ public sealed class StatusBar : Window
         "ShellHost", "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost", "SearchApp", "LockApp", "TextInputHost",
     };
 
-    public StatusBar(Func<IntPtr, DockItem?> itemFor, Action hideBar)
+    public StatusBar(Func<IntPtr, DockItem?> itemFor, Action hideBar, Action openSettings)
     {
+        _openSettings = openSettings;
         _itemFor = itemFor;
         _hideBar = hideBar;
 
@@ -378,6 +379,7 @@ public sealed class StatusBar : Window
         menu.Items.Add(MenuItem("Sound settings", () => Open("ms-settings:sound")));
         menu.Items.Add(MenuItem("Network settings", () => Open("ms-settings:network")));
         menu.Items.Add(new Separator());
+        menu.Items.Add(MenuItem("WinDockIt settings…", _openSettings));
         menu.Items.Add(MenuItem("Hide status bar", _hideBar));
         OpenMenu(menu, null, restoreFocus: true);
     }

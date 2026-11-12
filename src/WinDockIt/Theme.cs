@@ -8,10 +8,21 @@ internal static class Theme
 {
     const string Personalize = @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
 
-    public static bool IsLight => Read("AppsUseLightTheme", 1) == 1;
+    /// <summary>The user's choice in WinDockIt's settings; System follows Windows.</summary>
+    public static ThemeMode Mode { get; set; } = ThemeMode.System;
 
-    /// <summary>Respects Settings › Personalization › Colors › Transparency effects.</summary>
-    public static bool TransparencyEnabled => Read("EnableTransparency", 1) == 1;
+    /// <summary>WinDockIt's own frosted glass switch.</summary>
+    public static bool GlassOn { get; set; } = true;
+
+    public static bool IsLight => Mode switch
+    {
+        ThemeMode.Light => true,
+        ThemeMode.Dark => false,
+        _ => Read("AppsUseLightTheme", 1) == 1,
+    };
+
+    /// <summary>WinDockIt's glass switch, and Settings › Personalization › Colors › Transparency effects.</summary>
+    public static bool TransparencyEnabled => GlassOn && Read("EnableTransparency", 1) == 1;
 
     static int Read(string name, int fallback)
     {

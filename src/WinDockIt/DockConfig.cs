@@ -5,12 +5,24 @@ namespace WinDockIt;
 
 public enum DockPosition { Bottom, Top, Left, Right }
 
+public enum ThemeMode { System, Light, Dark }
+
+public enum HideMode { KeepSpace, Smart, Always }
+
 public sealed class DockConfig
 {
     public DockPosition Position { get; set; } = DockPosition.Bottom;
     public double IconSize { get; set; } = 46;
     public double Magnification { get; set; } = 1.75;
+    /// <summary>Always slide away until the screen edge is touched.</summary>
     public bool AutoHide { get; set; }
+    /// <summary>Reserve no space; step aside only while a window overlaps the dock. Ignored when <see cref="AutoHide"/> is on.</summary>
+    public bool SmartHide { get; set; } = true;
+    /// <summary>Running apps that aren't pinned get their own icons after a divider.</summary>
+    public bool ShowRunning { get; set; } = true;
+    /// <summary>The frosted blur behind the dock and status bar (also needs Windows' transparency effects).</summary>
+    public bool Glass { get; set; } = true;
+    public ThemeMode Theme { get; set; } = ThemeMode.System;
     public bool ShowStart { get; set; } = true;
     public bool HideTaskbar { get; set; }
     /// <summary>The Mac-style bar along the top with Wi-Fi, Bluetooth, volume, battery and the clock.</summary>
@@ -18,6 +30,13 @@ public sealed class DockConfig
     /// <summary>The taskbar's own auto-hide setting before WinDockIt hid it; set only while it's hidden.</summary>
     public bool? TaskbarWasAutoHide { get; set; }
     public List<DockItem> Items { get; set; } = new();
+
+    [JsonIgnore]
+    public HideMode Hide
+    {
+        get => AutoHide ? HideMode.Always : SmartHide ? HideMode.Smart : HideMode.KeepSpace;
+        set { AutoHide = value == HideMode.Always; SmartHide = value == HideMode.Smart; }
+    }
 
     public static string Folder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WinDockIt");

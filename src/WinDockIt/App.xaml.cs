@@ -19,6 +19,10 @@ public partial class App : Application
         _mutex = new Mutex(true, "WinDockIt.SingleInstance", out bool created);
         if (!created)
         {
+            // Already running: opening WinDockIt again shows its settings, like reopening a Mac app.
+            // We were just launched by the user, so we may bring a window forward; pass that on to the dock.
+            AllowSetForegroundWindow(-1 /* ASFW_ANY */);
+            try { using var show = EventWaitHandle.OpenExisting(ShowSettingsEvent); show.Set(); } catch { }
             Shutdown();
             return;
         }
@@ -30,8 +34,23 @@ public partial class App : Application
         };
 
         base.OnStartup(e);
-        new DockWindow().Start();
+        var dock = new DockWindow();
+        dock.Start();
+        _showSettings = new EventWaitHandle(false, EventResetMode.AutoReset, ShowSettingsEvent);
+        new Thread(() =>
+        {
+            while (_showSettings.WaitOne())
+                dock.Dispatcher.InvokeAsync(() =>
+                {
+                    try { dock.OpenSettings(); } catch (Exception ex) { Log(ex); }
+                });
+        }) { IsBackground = true, Name = "Show settings" }.Start();
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(int pid);
+
+    const string ShowSettingsEvent = "WinDockIt.ShowSettings";
+    EventWaitHandle? _showSettings;
 
     internal static void Log(Exception ex)
     {

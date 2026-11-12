@@ -9,7 +9,7 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 - **Frosted glass.** Real blur of whatever is behind the dock, with smooth rounded corners. It follows your Windows light/dark theme and the *Transparency effects* setting.
 - **Magnification.** Icons swell smoothly as you move across them. The icon under your cursor stays put.
 - **Any edge.** Bottom, top, left or right, switchable from the dock's menu.
-- **Its own space.** Like the Mac Dock, it reserves its strip of the screen, so maximized and snapped windows stop at the dock instead of going underneath it.
+- **Smart hide.** Windows get the whole screen. The dock stays in view and only slides away while a window overlaps it. Touch the screen edge to bring it back. You can instead keep a strip of the screen for the dock, like the taskbar, or have it always auto-hide.
 - **Always fits.** No scrolling: when there are too many items, every icon shrinks evenly until the whole dock fits.
 - **Import from taskbar.** Brings over your pinned taskbar apps, in order, including Store apps. On first run the dock starts with them.
 - **Running indicators.** A dot under every app with an open window.
@@ -23,7 +23,7 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 - **Pin anything.** Drag apps, shortcuts, files or folders onto the dock, or use **Add app…**.
 - **Reorder and remove.** Drag icons to reorder. Drag one off the dock and let go to remove it.
 - **Recycle Bin.** Shows whether it's full or empty, and can be emptied from its menu.
-- **Auto-hide.** Optional. The dock slides away and returns when you touch the screen edge.
+- **Settings window.** Appearance (position, icon size, magnification, light or dark theme, frosted glass), Behaviour (how the dock hides, status bar, taskbar, running apps, Start button, start with Windows), and your pinned apps in order. Every change applies to the dock straight away. Open it from the dock's menu, the status bar's menu, or by launching WinDockIt again while it's running.
 - **Stays out of fullscreen.** The dock hides while a game or video is fullscreen.
 - **Start with Windows.** Optional, from the menu.
 
@@ -34,7 +34,7 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 | Open or switch to an app | Click its icon |
 | Open a new window | Shift+click or middle-click |
 | App options, its open windows, Keep in Dock, Close | Right-click an icon |
-| Dock settings (position, size, magnification, auto-hide) | Right-click an empty part of the dock |
+| Settings | Right-click an empty part of the dock › Settings…, or launch WinDockIt again |
 | Pin something | Drag it onto the dock |
 | Change the volume | Scroll over the volume icon in the status bar |
 | Bring over your taskbar apps | Right-click an empty part of the dock › Import from taskbar |
@@ -64,7 +64,7 @@ Settings and pinned items live in `%APPDATA%\WinDockIt\config.json`. You can edi
   "position": "Bottom",
   "iconSize": 46,
   "magnification": 1.75,
-  "autoHide": false,
+  "smartHide": true,
   "items": [
     { "name": "Terminal", "location": "shell:AppsFolder\\Microsoft.WindowsTerminal_8wekyb3d8bbwe!App", "processName": "WindowsTerminal" }
   ]
@@ -88,6 +88,7 @@ All layout happens by hand each frame, in "dock space": distance *along* the doc
 | `GlassBackdrop.cs` | Frosted glass via Windows.UI.Composition |
 | `AppBar.cs` | Reserves the dock's screen space, like the taskbar does |
 | `TaskbarPins.cs` | Reads the taskbar's pinned apps for import |
+| `SettingsWindow.cs` | The Settings window |
 | `StatusBar.cs` | The bar along the top: app name, status icons, clock |
 | `SystemStatus.cs` | Reads network, Bluetooth, volume and battery state |
 | `TaskbarHider.cs` | Hides and restores the Windows taskbar, plus the crash watchdog |

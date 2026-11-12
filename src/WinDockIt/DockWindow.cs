@@ -83,6 +83,8 @@ public sealed class DockWindow : Window
     public DockWindow()
     {
         _cfg = DockConfig.Load();
+        Theme.Mode = _cfg.Theme;
+        Theme.GlassOn = _cfg.Glass;
         _base = _cfg.IconSize;
 
         Title = AppName;
@@ -188,12 +190,12 @@ public sealed class DockWindow : Window
     }
 
     /// <summary>Shows or removes the bar along the top of the screen.</summary>
-    void SetStatusBar(bool on)
+    internal void SetStatusBar(bool on)
     {
         if (_cfg.ShowStatusBar != on) { _cfg.ShowStatusBar = on; _cfg.Save(); }
         if (on && _status == null)
         {
-            _status = new StatusBar(h => _items.FirstOrDefault(i => i.IsApp && i.Windows.Contains(h)), () => SetStatusBar(false));
+            _status = new StatusBar(h => _items.FirstOrDefault(i => i.IsApp && i.Windows.Contains(h)), () => SetStatusBar(false), () => OpenSettings("behaviour"));
             _status.Start();
         }
         else if (!on && _status != null)
@@ -323,6 +325,56 @@ public sealed class DockWindow : Window
     {
         _cfg.Items = Pins;
         _cfg.Save();
+        PinsChanged?.Invoke();
+    }
+
+    // ───────────────────────── settings window ─────────────────────────
+
+    SettingsWindow? _settings;
+
+    /// <summary>The pinned items were added to, removed or reordered.</summary>
+    internal event Action? PinsChanged;
+    internal DockConfig Config => _cfg;
+    internal List<DockItem> PinnedItems => Pins;
+
+    internal void OpenSettings(string page = "appearance")
+    {
+        if (_settings == null)
+        {
+            _settings = new SettingsWindow(this);
+            _settings.Closed += (_, _) => _settings = null;
+            _settings.Show();
+        }
+        _settings.ShowPage(page);
+        if (_settings.WindowState == WindowState.Minimized) _settings.WindowState = WindowState.Normal;
+        // Raise it above other windows even if Windows won't hand us the focus.
+        var h = new WindowInteropHelper(_settings).Handle;
+        SetWindowPos(h, new IntPtr(-1) /* TOPMOST */, 0, 0, 0, 0, 0x3 | 0x40 /* NOSIZE | NOMOVE | SHOWWINDOW */);
+        SetWindowPos(h, new IntPtr(-2) /* NOTOPMOST */, 0, 0, 0, 0, 0x3 | 0x40);
+        _settings.Activate();
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+    internal void SetIconSize(double size) { _cfg.IconSize = Math.Clamp(size, 24, 128); _cfg.Save(); ApplyLayout(); }
+    internal void SetMagnification(double mag) { _cfg.Magnification = mag; _cfg.Save(); ApplyLayout(); }
+    internal void SetHide(HideMode mode) { _cfg.Hide = mode; _cfg.Save(); _covered = false; ApplyLayout(); }
+    internal void SetShowStart(bool on) { _cfg.ShowStart = on; _cfg.Save(); Rebuild(Pins, Transients); }
+    internal void SetShowRunning(bool on) { _cfg.ShowRunning = on; _cfg.Save(); RefreshRunning(); }
+    internal void SetTheme(ThemeMode mode) { _cfg.Theme = Theme.Mode = mode; _cfg.Save(); ApplyTheme(); }
+    internal void SetGlass(bool on) { _cfg.Glass = Theme.GlassOn = on; _cfg.Save(); ApplyTheme(); }
+    internal void RemovePin(DockItem it) => Unpin(it);
+
+    /// <summary>Moves a pinned item one place along the dock.</summary>
+    internal void MovePin(DockItem it, int delta)
+    {
+        var pins = Pins;
+        int i = pins.IndexOf(it), j = i + delta;
+        if (i < 0 || j < 0 || j >= pins.Count) return;
+        (pins[i], pins[j]) = (pins[j], pins[i]);
+        Rebuild(pins, Transients);
+        SaveItems();
     }
 
     // ───────────────────────── layout ─────────────────────────
@@ -374,7 +426,7 @@ public sealed class DockWindow : Window
         if (Math.Abs(old - _base) > 0.01) ApplyLayout(); else Kick();
     }
 
-    int ReserveThickness() => _cfg.AutoHide ? 0 : (int)Math.Ceiling((EdgeGap + PlateDepth + ReserveGap) * _dpi);
+    int ReserveThickness() => _cfg.Hide != HideMode.KeepSpace ? 0 : (int)Math.Ceiling((EdgeGap + PlateDepth + ReserveGap) * _dpi);
 
     static bool TryMonitor(IntPtr mon, out Native.MONITORINFO mi)
     {
@@ -899,6 +951,8 @@ public sealed class DockWindow : Window
 
     void AddDockMenu(ContextMenu menu)
     {
+        menu.Items.Add(Item("Settings…", () => OpenSettings()));
+        menu.Items.Add(new Separator());
         menu.Items.Add(Item("Add app…", AddApps));
         menu.Items.Add(Item("Import from taskbar", ImportTaskbar));
         menu.Items.Add(new Separator());
@@ -914,7 +968,10 @@ public sealed class DockWindow : Window
         menu.Items.Add(Item("Hide Windows taskbar", () => SetHideTaskbar(!_cfg.HideTaskbar), _cfg.HideTaskbar));
         menu.Items.Add(Item("Show status bar", () => SetStatusBar(!_cfg.ShowStatusBar), _cfg.ShowStatusBar));
         menu.Items.Add(Item("Show Start button", () => { _cfg.ShowStart = !_cfg.ShowStart; _cfg.Save(); Rebuild(Pins, Transients); }, _cfg.ShowStart));
-        menu.Items.Add(Item("Automatically hide", () => { _cfg.AutoHide = !_cfg.AutoHide; _cfg.Save(); ApplyLayout(); }, _cfg.AutoHide));
+        menu.Items.Add(Sub("Hide dock",
+            Item("Smart hide", () => SetHide(HideMode.Smart), _cfg.Hide == HideMode.Smart),
+            Item("Keep space for the dock", () => SetHide(HideMode.KeepSpace), _cfg.Hide == HideMode.KeepSpace),
+            Item("Always auto-hide", () => SetHide(HideMode.Always), _cfg.Hide == HideMode.Always)));
         menu.Items.Add(Item("Start with Windows", () => SetStartup(!IsStartup), IsStartup));
         menu.Items.Add(new Separator());
         menu.Items.Add(Item("Open settings folder", () => Start(DockConfig.Folder, null)));
@@ -927,7 +984,7 @@ public sealed class DockWindow : Window
     MenuItem MagItem(string name, double mag) =>
         Item(name, () => { _cfg.Magnification = mag; _cfg.Save(); ApplyLayout(); }, Math.Abs(_cfg.Magnification - mag) < 0.01);
 
-    void SetHideTaskbar(bool hide)
+    internal void SetHideTaskbar(bool hide)
     {
         _cfg.HideTaskbar = hide;
         _cfg.Save();
@@ -935,7 +992,7 @@ public sealed class DockWindow : Window
         ApplyLayout();
     }
 
-    void SetPosition(DockPosition p)
+    internal void SetPosition(DockPosition p)
     {
         _cfg.Position = p;
         _cfg.Save();
@@ -944,7 +1001,7 @@ public sealed class DockWindow : Window
         ApplyLayout();
     }
 
-    void AddApps()
+    internal void AddApps()
     {
         var dlg = new OpenFileDialog
         {
@@ -962,7 +1019,7 @@ public sealed class DockWindow : Window
     }
 
     /// <summary>Adds the taskbar's pinned apps, in taskbar order, skipping any already on the dock.</summary>
-    void ImportTaskbar()
+    internal void ImportTaskbar()
     {
         var pins = Pins;
         var have = new HashSet<string>(pins.Select(i => Shell.IdentityKey(i.Location)));
@@ -980,7 +1037,7 @@ public sealed class DockWindow : Window
         RefreshRunning();
     }
 
-    static bool IsStartup
+    internal static bool IsStartup
     {
         get
         {
@@ -989,7 +1046,7 @@ public sealed class DockWindow : Window
         }
     }
 
-    static void SetStartup(bool on)
+    internal static void SetStartup(bool on)
     {
         using var k = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
         if (k == null) return;
@@ -1013,7 +1070,10 @@ public sealed class DockWindow : Window
         }
         if (fs) return;
 
-        if (!_cfg.AutoHide)
+        // Smart hide: step aside only while a window overlaps the dock (checked every other tick).
+        if (_cfg.Hide == HideMode.Smart && ++_coverTick % 2 == 0) _covered = Covered();
+        bool wantHidden = _cfg.Hide == HideMode.Always || (_cfg.Hide == HideMode.Smart && _covered);
+        if (!wantHidden)
         {
             if (_hidden) Reveal();
             return;
@@ -1039,6 +1099,43 @@ public sealed class DockWindow : Window
             _hidden = true;
             EndHover();
         }
+    }
+
+    int _coverTick;
+    bool _covered;
+
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    static extern int DwmGetWindowAttribute(IntPtr h, int attr, out Native.RECT r, int size);
+
+    /// <summary>
+    /// True when some app window overlaps the spot where the dock sits when shown. Uses each
+    /// window's visible frame (not its larger invisible resize border), so a window that merely
+    /// ends at the dock's edge doesn't count.
+    /// </summary>
+    bool Covered()
+    {
+        if (_hwnd == IntPtr.Zero || ActualWidth <= 0) return false;
+        var r = ToWin(_plateM0, _plateM1, 0, EdgeGap + PlateDepth);
+        double s = _dpi;
+        int x0 = (int)((Left + r.X) * s), y0 = (int)((Top + r.Y) * s), x1 = (int)((Left + r.Right) * s), y1 = (int)((Top + r.Bottom) * s);
+        uint me = (uint)Environment.ProcessId;
+        bool hit = false;
+        Native.EnumWindows((h, _) =>
+        {
+            if (!Native.IsWindowVisible(h) || Native.IsIconic(h)) return true;
+            Native.GetWindowThreadProcessId(h, out uint pid);
+            if (pid == me) return true;
+            long ex = Native.GetWindowLongPtr(h, Native.GWL_EXSTYLE).ToInt64();
+            if ((ex & (Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE | 0x20 /* TRANSPARENT */)) != 0) return true;
+            if (Native.DwmGetWindowAttribute(h, Native.DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
+            if (Native.GetWindowTextLength(h) == 0) return true;
+            if (Native.ClassName(h) is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd") return true;
+            if (DwmGetWindowAttribute(h, 9 /* EXTENDED_FRAME_BOUNDS */, out var b, System.Runtime.InteropServices.Marshal.SizeOf<Native.RECT>()) != 0
+                && !Native.GetWindowRect(h, out b)) return true;
+            if (b.Left < x1 && b.Right > x0 && b.Top < y1 && b.Bottom > y0) { hit = true; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return hit;
     }
 
     void Reveal()
@@ -1102,6 +1199,7 @@ public sealed class DockWindow : Window
             if (!groups.TryGetValue(w.GroupKey, out var g)) groups[w.GroupKey] = g = new();
             g.Add(w);
         }
+        if (!_cfg.ShowRunning) groups.Clear();
 
         // Keep existing running-only icons in place; new ones join at the end, as on the Mac.
         var old = Transients;
