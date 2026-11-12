@@ -14,6 +14,8 @@ public sealed class DockConfig
     public DockPosition Position { get; set; } = DockPosition.Bottom;
     public double IconSize { get; set; } = 46;
     public double Magnification { get; set; } = 1.75;
+    /// <summary>Space between icons, in DIPs.</summary>
+    public double IconSpacing { get; set; } = 12;
     /// <summary>Always slide away until the screen edge is touched.</summary>
     public bool AutoHide { get; set; }
     /// <summary>Reserve no space; step aside only while a window overlaps the dock. Ignored when <see cref="AutoHide"/> is on.</summary>
@@ -27,6 +29,8 @@ public sealed class DockConfig
     public bool HideTaskbar { get; set; }
     /// <summary>The Mac-style bar along the top with Wi-Fi, Bluetooth, volume, battery and the clock.</summary>
     public bool ShowStatusBar { get; set; } = true;
+    /// <summary>How the status bar gets out of the way: keep its strip, hide while a window covers it, or always hide.</summary>
+    public HideMode StatusBarHide { get; set; } = HideMode.KeepSpace;
     /// <summary>The taskbar's own auto-hide setting before WinDockIt hid it; set only while it's hidden.</summary>
     public bool? TaskbarWasAutoHide { get; set; }
     public List<DockItem> Items { get; set; } = new();
@@ -62,6 +66,7 @@ public sealed class DockConfig
                 {
                     c.IconSize = Math.Clamp(c.IconSize, 24, 128);
                     c.Magnification = Math.Clamp(c.Magnification, 1, 3);
+                    c.IconSpacing = Math.Clamp(c.IconSpacing, 2, 32);
                     c.Items ??= new();
                     c.Items.RemoveAll(i => string.IsNullOrWhiteSpace(i.Location));
                     c.Migrate();

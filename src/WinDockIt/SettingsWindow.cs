@@ -173,6 +173,7 @@ public sealed class SettingsWindow : Window
             Row("Position on screen", null, Segmented(["Bottom", "Left", "Right", "Top"], Array.IndexOf(positions, cfg.Position),
                 i => _dock.SetPosition(positions[i]))),
             Row("Icon size", "Icons shrink below this when the dock is full.", Slider(32, 72, 2, cfg.IconSize, v => $"{v:0} px", v => _dock.SetIconSize(v))),
+            Row("Space between icons", null, Slider(2, 24, 1, cfg.IconSpacing, v => $"{v:0} px", v => _dock.SetIconSpacing(v))),
             Row("Magnification", null, Segmented(["Off", "Subtle", "Medium", "Large"], mag, i => _dock.SetMagnification(mags[i]))));
 
         Group(
@@ -189,7 +190,7 @@ public sealed class SettingsWindow : Window
     {
         Heading("Behaviour");
 
-        Label("When a window is near the dock");
+        Label("Dock: when a window is near it");
         (HideMode Mode, string Title, string Hint)[] modes =
         [
             (HideMode.Smart, "Smart hide", "Windows use the whole screen. The dock steps aside only while one overlaps it."),
@@ -199,9 +200,22 @@ public sealed class SettingsWindow : Window
         Group(modes.Select(m => Choice(m.Title, m.Hint, cfg.Hide == m.Mode, () => { _dock.SetHide(m.Mode); Render(); },
             m.Mode == HideMode.Smart ? "Recommended" : null)).ToArray());
 
+        Label("Status bar");
+        HideMode[] barModes = [HideMode.KeepSpace, HideMode.Smart, HideMode.Always];
         Group(
             Row("Show status bar", "Wi-Fi, Bluetooth, volume, battery and the clock along the top of the screen.",
-                Toggle(cfg.ShowStatusBar, _dock.SetStatusBar)),
+                Toggle(cfg.ShowStatusBar, on => { _dock.SetStatusBar(on); Render(); })),
+            Row("Hide the status bar", cfg.StatusBarHide switch
+                {
+                    HideMode.Smart => "Steps aside while a window covers it. Rest the cursor at the top edge to bring it back.",
+                    HideMode.Always => "Stays out of sight until you rest the cursor at the top edge.",
+                    _ => "Never: maximized windows stop below the bar.",
+                },
+                Enable(cfg.ShowStatusBar, Segmented(["Never", "Smart", "Always"], Array.IndexOf(barModes, cfg.StatusBarHide),
+                    i => { _dock.SetStatusBarHide(barModes[i]); Render(); }))));
+
+        Label("General");
+        Group(
             Row("Hide the Windows taskbar", "Comes back when WinDockIt quits.", Toggle(cfg.HideTaskbar, _dock.SetHideTaskbar)),
             Row("Show running apps that aren't pinned", "They appear after a divider and leave when closed.",
                 Toggle(cfg.ShowRunning, _dock.SetShowRunning)),
@@ -289,6 +303,13 @@ public sealed class SettingsWindow : Window
             Child = stack, Background = P.Card, BorderBrush = P.Line, BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10), Margin = new Thickness(0, 0, 0, 18),
         });
+    }
+
+    static UIElement Enable(bool on, UIElement el)
+    {
+        el.IsEnabled = on;
+        el.Opacity = on ? 1 : 0.45;
+        return el;
     }
 
     UIElement Row(string title, string? hint, UIElement control)

@@ -16,14 +16,14 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 - **Every open app.** Running apps that aren't pinned appear after a divider, and leave when you close them. Right-click › **Keep in Dock** pins one. Windows are grouped by app the same way the taskbar groups them, so web apps and Store apps get their own icons.
 - **Asks for attention.** When an app flashes for attention, its icon bounces and its dot turns orange until you look.
 - **Start button.** Opens the Start menu. Can be hidden from the dock's menu.
-- **Status bar.** A thin frosted bar along the top of the screen, like the Mac menu bar. On the left: Start and the name of the app you're in. Click the name to see that app's windows, or to hide or quit it. On the right: Wi-Fi, Bluetooth, volume, battery, quick settings, and the date and time. Each opens the matching Windows panel, and you can scroll over the volume icon to change it. Like the dock, the bar reserves its own strip of the screen. Turn it off with **Show status bar** in the dock's menu.
+- **Status bar.** A thin frosted bar along the top of the screen, like the Mac menu bar. On the left: Start and the name of the app you're in. Click the name to see that app's windows, or to hide or quit it. On the right: Wi-Fi, Bluetooth, volume, battery, quick settings, and the date and time. Each opens the matching Windows panel, and you can scroll over the volume icon to change it. By default the bar keeps its own strip of the screen. In Settings you can make it hide like the dock instead: *Smart* steps aside while a window covers it, and *Always* keeps it out of sight. Either way, rest the cursor at the top edge to bring it back. Turn it off with **Show status bar** in the dock's menu.
 - **Replace the taskbar.** Optional: **Hide Windows taskbar** in the dock's menu. The taskbar comes back when WinDockIt quits, and a small watchdog brings it back even if WinDockIt crashes. While it's hidden, the status bar shows the clock and system status.
 - **Click to switch.** Clicking a running app brings it forward. Click again to minimize it. If the app has several windows, clicking cycles through them.
 - **Launch bounce.** Icons hop when an app starts.
 - **Pin anything.** Drag apps, shortcuts, files or folders onto the dock, or use **Add app…**.
 - **Reorder and remove.** Drag icons to reorder. Drag one off the dock and let go to remove it.
 - **Recycle Bin.** Shows whether it's full or empty, and can be emptied from its menu.
-- **Settings window.** Appearance (position, icon size, magnification, light or dark theme, frosted glass), Behaviour (how the dock hides, status bar, taskbar, running apps, Start button, start with Windows), and your pinned apps in order. Every change applies to the dock straight away. Open it from the dock's menu, the status bar's menu, or by launching WinDockIt again while it's running.
+- **Settings window.** Appearance (position, icon size, space between icons, magnification, light or dark theme, frosted glass), Behaviour (how the dock and status bar hide, status bar, taskbar, running apps, Start button, start with Windows), and your pinned apps in order. Every change applies to the dock straight away. Open it from the dock's menu, the status bar's menu, or by launching WinDockIt again while it's running.
 - **Stays out of fullscreen.** The dock hides while a game or video is fullscreen.
 - **Start with Windows.** Optional, from the menu.
 
@@ -34,7 +34,7 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 | Open or switch to an app | Click its icon |
 | Open a new window | Shift+click or middle-click |
 | App options, its open windows, Keep in Dock, Close | Right-click an icon |
-| Settings | Right-click an empty part of the dock › Settings…, or launch WinDockIt again |
+| Settings | Right-click any dock icon › Dock settings…, right-click the status bar › WinDockIt settings…, or launch WinDockIt again |
 | Pin something | Drag it onto the dock |
 | Change the volume | Scroll over the volume icon in the status bar |
 | Bring over your taskbar apps | Right-click an empty part of the dock › Import from taskbar |

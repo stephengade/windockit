@@ -24,7 +24,6 @@ public sealed class DockWindow : Window
     const double PadEdge = 12;   // glass padding on the edge side (room for the running dot)
     const double PadOuter = 9;   // glass padding on the far side
     const double PadMain = 7;    // glass padding at each end
-    const double Spacing = 6;    // space between icons
     const double SepSlot = 17;   // width of the divider slot
     const double ReserveGap = 6; // space kept between the glass and maximized windows
     const double MinIcon = 16;   // smallest icons get when shrinking to fit
@@ -195,7 +194,7 @@ public sealed class DockWindow : Window
         if (_cfg.ShowStatusBar != on) { _cfg.ShowStatusBar = on; _cfg.Save(); }
         if (on && _status == null)
         {
-            _status = new StatusBar(h => _items.FirstOrDefault(i => i.IsApp && i.Windows.Contains(h)), () => SetStatusBar(false), () => OpenSettings("behaviour"));
+            _status = new StatusBar(h => _items.FirstOrDefault(i => i.IsApp && i.Windows.Contains(h)), () => SetStatusBar(false), () => OpenSettings("behaviour"), _cfg.StatusBarHide);
             _status.Start();
         }
         else if (!on && _status != null)
@@ -358,6 +357,8 @@ public sealed class DockWindow : Window
     static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
 
     internal void SetIconSize(double size) { _cfg.IconSize = Math.Clamp(size, 24, 128); _cfg.Save(); ApplyLayout(); }
+    internal void SetIconSpacing(double gap) { _cfg.IconSpacing = Math.Clamp(gap, 2, 32); _cfg.Save(); ApplyLayout(); }
+    internal void SetStatusBarHide(HideMode mode) { _cfg.StatusBarHide = mode; _cfg.Save(); _status?.SetHideMode(mode); }
     internal void SetMagnification(double mag) { _cfg.Magnification = mag; _cfg.Save(); ApplyLayout(); }
     internal void SetHide(HideMode mode) { _cfg.Hide = mode; _cfg.Save(); _covered = false; ApplyLayout(); }
     internal void SetShowStart(bool on) { _cfg.ShowStart = on; _cfg.Save(); Rebuild(Pins, Transients); }
@@ -471,7 +472,8 @@ public sealed class DockWindow : Window
     };
 
     double BaseSlot(DockItem it) => it.IsSeparator ? SepSlot : Base + Spacing;
-    static double CurSlot(DockItem it) => it.IsSeparator ? SepSlot : it.Size + Spacing;
+    double CurSlot(DockItem it) => it.IsSeparator ? SepSlot : it.Size + Spacing;
+    double Spacing => _cfg.IconSpacing;   // space between icons
 
     const double IconCanvas = 192;
 
@@ -913,6 +915,8 @@ public sealed class DockWindow : Window
             menu.Items.Add(it.IsPinned ? Item("Remove from Dock", () => Unpin(it)) : Item("Keep in Dock", () => KeepInDock(it)));
             if (it.Windows.Count > 0)
                 menu.Items.Add(Item(it.Windows.Count == 1 ? "Close window" : "Close all windows", () => CloseAll(it)));
+            menu.Items.Add(new Separator());
+            menu.Items.Add(Item("Dock settings…", () => OpenSettings()));
         }
         else if (it is { IsTrash: true })
         {
@@ -920,6 +924,8 @@ public sealed class DockWindow : Window
             var empty = Item("Empty Recycle Bin", () => { Native.SHEmptyRecycleBin(_hwnd, null, 0); SlowTick(); });
             empty.IsEnabled = _trashCount != 0;
             menu.Items.Add(empty);
+            menu.Items.Add(new Separator());
+            menu.Items.Add(Item("Dock settings…", () => OpenSettings()));
         }
         else
         {
@@ -1117,7 +1123,12 @@ public sealed class DockWindow : Window
         if (_hwnd == IntPtr.Zero || ActualWidth <= 0) return false;
         var r = ToWin(_plateM0, _plateM1, 0, EdgeGap + PlateDepth);
         double s = _dpi;
-        int x0 = (int)((Left + r.X) * s), y0 = (int)((Top + r.Y) * s), x1 = (int)((Left + r.Right) * s), y1 = (int)((Top + r.Bottom) * s);
+        return AnyWindowOver((int)((Left + r.X) * s), (int)((Top + r.Y) * s), (int)((Left + r.Right) * s), (int)((Top + r.Bottom) * s));
+    }
+
+    /// <summary>True when some app window's visible frame overlaps the given rectangle (physical pixels).</summary>
+    internal static bool AnyWindowOver(int x0, int y0, int x1, int y1)
+    {
         uint me = (uint)Environment.ProcessId;
         bool hit = false;
         Native.EnumWindows((h, _) =>

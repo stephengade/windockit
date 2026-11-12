@@ -35,6 +35,15 @@ public sealed class StatusBar : Window
     bool _closed, _menuOpen;
     int _ticks;
 
+    // Hiding: like the dock, the bar can keep its strip, step aside while a window covers it, or always hide.
+    HideMode _hideMode;
+    readonly DispatcherTimer _fast;
+    bool _fullscreen, _hidden, _covered, _animating, _shown = true;
+    double _hideT;                  // 0 = in place, 1 = slid up out of sight
+    int _fastTicks;
+    DateTime _lastOver = DateTime.Now, _edgeSince = DateTime.MaxValue;
+    Native.RECT _bar;               // where the bar sits when shown, physical pixels
+
     readonly Grid _root = new();
     readonly Border _tint = new() { BorderThickness = new Thickness(0, 0, 0, 1) };
     readonly StackPanel _left = new() { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 0, 0, 0) };
@@ -68,8 +77,9 @@ public sealed class StatusBar : Window
         "ShellHost", "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost", "SearchApp", "LockApp", "TextInputHost",
     };
 
-    public StatusBar(Func<IntPtr, DockItem?> itemFor, Action hideBar, Action openSettings)
+    public StatusBar(Func<IntPtr, DockItem?> itemFor, Action hideBar, Action openSettings, HideMode hideMode)
     {
+        _hideMode = hideMode;
         _openSettings = openSettings;
         _itemFor = itemFor;
         _hideBar = hideBar;
@@ -131,6 +141,7 @@ public sealed class StatusBar : Window
         DpiChanged += (_, _) => ApplyLayout();
 
         _tick = new DispatcherTimer(TimeSpan.FromMilliseconds(250), DispatcherPriority.Background, (_, _) => Tick(), Dispatcher);
+        _fast = new DispatcherTimer(TimeSpan.FromMilliseconds(60), DispatcherPriority.Background, (_, _) => HideTick(), Dispatcher);
         Windows.Networking.Connectivity.NetworkInformation.NetworkStatusChanged += _ => Dispatcher.InvokeAsync(UpdateNetwork);
         SystemStatus.LoadBluetooth(() => Dispatcher.InvokeAsync(UpdateBluetooth));
         Application.Current.Exit += (_, _) => _appBar?.Dispose();
@@ -145,6 +156,7 @@ public sealed class StatusBar : Window
         new WindowInteropHelper(this).Owner = _glass.Handle;
         Show();
         ApplyLayout();
+        _fast.Start();
     }
 
     /// <summary>Removes the bar and gives its strip of the screen back.</summary>
@@ -153,6 +165,8 @@ public sealed class StatusBar : Window
         if (_closed) return;
         _closed = true;
         _tick.Stop();
+        _fast.Stop();
+        if (_animating) { CompositionTarget.Rendering -= Animate; _animating = false; }
         _appBar?.Dispose();
         Close();
         _glass.Dispose();
@@ -168,9 +182,88 @@ public sealed class StatusBar : Window
     /// <summary>Hidden while a game or video is fullscreen, like the dock.</summary>
     public void SetFullscreen(bool fullscreen)
     {
+        _fullscreen = fullscreen;
+        UpdateVisibility();
+    }
+
+    /// <summary>Switches between keeping the bar's strip, smart hide and always auto-hide.</summary>
+    public void SetHideMode(HideMode mode)
+    {
+        _hideMode = mode;
+        _covered = false;
+        _hidden = false;
+        ApplyLayout();
+        AnimateTo();
+    }
+
+    // ───────────────────────── hiding ─────────────────────────
+
+    /// <summary>Decides whether the bar should be tucked away, and watches for the cursor at the top edge.</summary>
+    void HideTick()
+    {
+        if (_closed || _fullscreen || _hwnd == IntPtr.Zero) return;
+        if (_hideMode == HideMode.Smart && ++_fastTicks % 3 == 0)
+            _covered = DockWindow.AnyWindowOver(_bar.Left, _bar.Top, _bar.Right, _bar.Bottom);
+        bool wantHidden = _hideMode == HideMode.Always || (_hideMode == HideMode.Smart && _covered);
+        if (!wantHidden) { SetHidden(false); return; }
+
+        Native.GetCursorPos(out var pt);
+        bool inX = pt.X >= _bar.Left && pt.X < _bar.Right;
+        bool over = _menuOpen || (!_hidden && inX && pt.Y >= _bar.Top && pt.Y < _bar.Bottom);
+        if (over) { _lastOver = DateTime.Now; return; }
+
+        if (_hidden)
+        {
+            // Rest the cursor against the top edge for a moment, so flicking up to a browser tab doesn't pop the bar over it.
+            if (inX && pt.Y <= _bar.Top + 1)
+            {
+                if (_edgeSince == DateTime.MaxValue) _edgeSince = DateTime.Now;
+                else if ((DateTime.Now - _edgeSince).TotalMilliseconds >= 220) { _lastOver = DateTime.Now; SetHidden(false); }
+            }
+            else _edgeSince = DateTime.MaxValue;
+        }
+        else if ((DateTime.Now - _lastOver).TotalMilliseconds > 700) SetHidden(true);
+    }
+
+    void SetHidden(bool hidden)
+    {
+        _edgeSince = DateTime.MaxValue;
+        if (_hidden == hidden) return;
+        _hidden = hidden;
+        AnimateTo();
+    }
+
+    void AnimateTo()
+    {
+        UpdateVisibility();
+        if (_animating) return;
+        _animating = true;
+        CompositionTarget.Rendering += Animate;
+    }
+
+    void Animate(object? sender, EventArgs e)
+    {
+        double goal = _hidden ? 1 : 0;
+        _hideT += (goal - _hideT) * 0.28;
+        if (Math.Abs(goal - _hideT) < 0.01)
+        {
+            _hideT = goal;
+            CompositionTarget.Rendering -= Animate;
+            _animating = false;
+        }
+        Place();
+        UpdateVisibility();
+    }
+
+    /// <summary>Shown unless something fullscreen is in front, or the bar has finished sliding away.</summary>
+    void UpdateVisibility()
+    {
         if (_closed) return;
-        if (fullscreen) { Hide(); _glass.Hide(); }
-        else { _glass.Show(); Show(); }
+        bool show = !_fullscreen && !(_hidden && _hideT >= 1);
+        if (show == _shown) return;
+        _shown = show;
+        if (show) { _glass.Show(); Show(); }
+        else { Hide(); _glass.Hide(); }
     }
 
     // ───────────────────────── layout ─────────────────────────
@@ -185,14 +278,23 @@ public sealed class StatusBar : Window
         if (Native.GetDpiForMonitor(mon, 0, out uint dpiX, out _) == 0) _dpi = dpiX / 96.0;
 
         int h = (int)Math.Round(BarHeight * _dpi);
-        var outer = _appBar?.Reserve(mi.rcMonitor, DockPosition.Top, h) ?? mi.rcMonitor;
-        int w = outer.Right - outer.Left;
+        // Only "keep space" reserves the strip; otherwise windows get the whole screen and the bar floats over them.
+        var outer = _appBar?.Reserve(mi.rcMonitor, DockPosition.Top, _hideMode == HideMode.KeepSpace ? h : 0) ?? mi.rcMonitor;
+        _bar = new Native.RECT { Left = outer.Left, Top = outer.Top, Right = outer.Right, Bottom = outer.Top + h };
+        Place();
+    }
 
-        Left = outer.Left / _dpi;
-        Top = outer.Top / _dpi;
+    /// <summary>Puts the bar and its glass where they belong, slid up by the hide animation.</summary>
+    void Place()
+    {
+        int w = _bar.Right - _bar.Left, h = _bar.Bottom - _bar.Top;
+        if (w <= 0) return;
+        int y = _bar.Top - (int)Math.Round(_hideT * (h + 2));
+        Left = _bar.Left / _dpi;
+        Top = y / _dpi;
         Width = w / _dpi;
         Height = BarHeight;
-        _glass.SetShape(outer.Left, outer.Top, w, h, 0, 0, w, h, 0);
+        _glass.SetShape(_bar.Left, y, w, h, 0, 0, w, h, 0);
     }
 
     // ───────────────────────── theme ─────────────────────────
