@@ -27,6 +27,7 @@ public sealed class DockWindow : Window
     const double SepSlot = 17;   // width of the divider slot
     const double ReserveGap = 6; // space kept between the glass and maximized windows
     const double MinIcon = 16;   // smallest icons get when shrinking to fit
+    const double OverflowIcon = 32; // below this, extra pinned apps move into the "+N" tile
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     const string AppName = "WinDockIt";
 
@@ -35,7 +36,11 @@ public sealed class DockWindow : Window
     readonly DockItem _sep = new() { IsSeparator = true };
     readonly DockItem _trash = new() { IsTrash = true, Name = "Recycle Bin", Location = Shell.RecycleBinPath };
     readonly DockItem _sepRun = new() { IsSeparator = true };   // between pinned and running-only apps
-    readonly DockItem _start = new() { IsStart = true, Name = "Start" };
+    readonly DockItem _start = new() { IsStart = true, Name = "Launchpad" };
+    readonly DockItem _more = new() { IsMore = true, Name = "More apps" };
+    /// <summary>Pinned apps that don't fit on the dock; they live in the "+N" tile and Launchpad.</summary>
+    readonly List<DockItem> _overflow = new();
+    LaunchpadWindow? _launchpad;
 
     readonly Canvas _root = new();
     readonly Canvas _shadowHost = new() { IsHitTestVisible = false };
@@ -107,7 +112,7 @@ public sealed class DockWindow : Window
         foreach (var el in new UIElement[] { _shadowHost, _tint, _shine, _hit, _itemLayer, _label })
             _root.Children.Add(el);
 
-        foreach (var it in new[] { _sep, _sepRun, _trash, _start }) Prepare(it);
+        foreach (var it in new[] { _sep, _sepRun, _trash, _start, _more }) Prepare(it);
         var pins = _cfg.Items.ToList();
         foreach (var it in pins) Prepare(it);
         Rebuild(pins, new());
@@ -186,6 +191,7 @@ public sealed class DockWindow : Window
         Show();
         Kick();
         if (_cfg.ShowStatusBar) SetStatusBar(true);
+        AppCatalog.Refresh();   // so Launchpad opens with every app ready
     }
 
     /// <summary>Shows or removes the bar along the top of the screen.</summary>
@@ -194,7 +200,7 @@ public sealed class DockWindow : Window
         if (_cfg.ShowStatusBar != on) { _cfg.ShowStatusBar = on; _cfg.Save(); }
         if (on && _status == null)
         {
-            _status = new StatusBar(h => _items.FirstOrDefault(i => i.IsApp && i.Windows.Contains(h)), () => SetStatusBar(false), () => OpenSettings("behaviour"), _cfg.StatusBarHide);
+            _status = new StatusBar(h => _items.FirstOrDefault(i => i.IsApp && i.Windows.Contains(h)), () => SetStatusBar(false), () => OpenSettings("behaviour"), () => ToggleLaunchpad(), _cfg.StatusBarHide);
             _status.Start();
         }
         else if (!on && _status != null)
@@ -217,7 +223,7 @@ public sealed class DockWindow : Window
             return;
         }
 
-        it.Icon ??= it.IsStart ? Shell.StartIcon() : Shell.GetIcon(it.Location) ?? Shell.LetterIcon(it.Name);
+        it.Icon ??= it.IsStart ? Shell.AppIcon() : it.IsMore ? Shell.MoreIcon(0, Theme.IsLight) : Shell.GetIcon(it.Location) ?? Shell.LetterIcon(it.Name);
         // Icons keep a fixed layout size and are scaled with a transform. Changing Width every frame made
         // WPF occasionally leave newly added elements unmeasured (drawn at 256px, or not at all), and
         // transforms skip the layout pass entirely.
@@ -237,7 +243,7 @@ public sealed class DockWindow : Window
         }
     }
 
-    List<DockItem> Pins => _items.Where(i => i.IsPinned).ToList();
+    List<DockItem> Pins => _items.Where(i => i.IsPinned).Concat(_overflow).ToList();
     List<DockItem> Transients => _items.Where(i => i.IsTransient).ToList();
     int PinStart => _items.Count > 0 && _items[0].IsStart ? 1 : 0;
 
@@ -249,7 +255,16 @@ public sealed class DockWindow : Window
     {
         var next = new List<DockItem>();
         if (_cfg.ShowStart) next.Add(_start);
-        next.AddRange(pins);
+        int fits = PinsThatFit(pins.Count, transients.Count);
+        next.AddRange(pins.Take(fits));
+        _overflow.Clear();
+        _overflow.AddRange(pins.Skip(fits));
+        if (_overflow.Count > 0)
+        {
+            next.Add(_more);
+            _more.Icon = Shell.MoreIcon(_overflow.Count, Theme.IsLight);
+            if (_more.Img != null) _more.Img.Source = _more.Icon;
+        }
         if (transients.Count > 0) { next.Add(_sepRun); next.AddRange(transients); }
         next.Add(_sep);
         next.Add(_trash);
@@ -260,6 +275,24 @@ public sealed class DockWindow : Window
         _items.AddRange(next);
         if (_hovered != null && !_items.Contains(_hovered)) _hovered = null;
         Refit();
+    }
+
+    /// <summary>
+    /// Like the Mac, the dock shrinks its icons to fit everything, but only down to a readable size.
+    /// Past that, the last pinned apps move into a "+N" tile (they're still in Launchpad).
+    /// </summary>
+    int PinsThatFit(int pins, int transients)
+    {
+        if (_length <= 0 || pins == 0) return pins;
+        double min = Math.Min(OverflowIcon, _cfg.IconSize);
+        double avail = _length - 2 * (EdgeGap + PadMain);
+        double seps = (transients > 0 ? 2 : 1) * SepSlot;
+        double growth = 2.4 * Math.Max(Mag - 1, 0);
+        int others = (_cfg.ShowStart ? 1 : 0) + transients + 1;   // Launchpad, running apps, Recycle Bin
+        // Same sum as Fit(): n icons at size `min`, their spacing, and the magnified row's growth.
+        int maxIcons = (int)Math.Floor((avail - seps - growth * min) / (min + Spacing));
+        if (pins + others <= maxIcons) return pins;
+        return Math.Clamp(maxIcons - others - 1, 1, pins);   // one slot goes to the "+N" tile
     }
 
     void Attach(DockItem it)
@@ -327,6 +360,76 @@ public sealed class DockWindow : Window
         PinsChanged?.Invoke();
     }
 
+    // ───────────────────────── Launchpad ─────────────────────────
+
+    /// <summary>Opens Launchpad, or closes it if it's already open.</summary>
+    internal void ToggleLaunchpad()
+    {
+        if (_launchpad != null) { _launchpad.CloseSheet(); return; }
+        AppCatalog.Refresh();
+        RefreshRunning();
+        _launchpad = new LaunchpadWindow(this);
+        _launchpad.Closed += (_, _) => _launchpad = null;
+        _launchpad.Open();
+    }
+
+    /// <summary>Where Launchpad should sit: the dock's shown rectangle and its screen's work area, in DIPs.</summary>
+    internal (Rect Dock, Rect Work, DockPosition Position, double Dpi) LaunchpadAnchor()
+    {
+        var r = ToWin(_plateM0, _plateM1, 0, EdgeGap + PlateDepth);
+        var dock = new Rect(Left + r.X, Top + r.Y, r.Width, r.Height);
+        var work = SystemParameters.WorkArea;
+        if (TryMonitor(Native.MonitorFromWindow(_hwnd, Native.MONITOR_DEFAULTTONEAREST), out var mi))
+            work = new Rect(mi.rcWork.Left / _dpi, mi.rcWork.Top / _dpi, (mi.rcWork.Right - mi.rcWork.Left) / _dpi, (mi.rcWork.Bottom - mi.rcWork.Top) / _dpi);
+        return (dock, work, _cfg.Position, _dpi);
+    }
+
+    internal List<DockItem> OverflowItems => _overflow.ToList();
+
+    /// <summary>Apps with windows open, pinned or not, in dock order.</summary>
+    internal List<DockItem> OpenApps => _items.Where(i => i.IsApp).Concat(_overflow).Where(i => i.Windows.Count > 0).ToList();
+
+    /// <summary>The dock item (pinned, overflowed or running) for a location, if there is one.</summary>
+    internal DockItem? ItemFor(string location) =>
+        _items.Where(i => i.IsApp).Concat(_overflow).FirstOrDefault(i => string.Equals(i.Location, location, StringComparison.OrdinalIgnoreCase));
+
+    void CountLaunch(string location)
+    {
+        if (string.IsNullOrEmpty(location)) return;
+        _cfg.LaunchCounts[location] = _cfg.LaunchCounts.GetValueOrDefault(location) + 1;
+        _cfg.Save();
+    }
+
+    /// <summary>The most-opened apps that still exist, most-opened first.</summary>
+    internal List<(string Name, string Location, ImageSource? Icon)> FrequentApps(int count, Func<string, CatalogApp?> catalog)
+    {
+        var result = new List<(string, string, ImageSource?)>();
+        foreach (var (location, _) in _cfg.LaunchCounts.OrderByDescending(kv => kv.Value))
+        {
+            if (result.Count >= count) break;
+            if (ItemFor(location) is { } it) result.Add((it.Name, it.Location, it.Icon));
+            else if (catalog(location) is { } app) result.Add((app.Name, app.Location, app.Icon));
+        }
+        return result;
+    }
+
+    /// <summary>Opens (or switches to) an app picked in Launchpad.</summary>
+    internal void LaunchFromLaunchpad(string location, DockItem? item, bool newInstance)
+    {
+        item ??= ItemFor(location);
+        if (item != null) { Activate(item, newInstance); return; }
+        CountLaunch(location);
+        Start(location, null);
+        _refreshSoon.Start();
+    }
+
+    internal void PinFromLaunchpad(string location, string name)
+    {
+        if (!AddPinned(location, Pins.Count)) return;
+        SaveItems();
+        RefreshRunning();
+    }
+
     // ───────────────────────── settings window ─────────────────────────
 
     SettingsWindow? _settings;
@@ -351,6 +454,7 @@ public sealed class DockWindow : Window
         SetWindowPos(h, new IntPtr(-1) /* TOPMOST */, 0, 0, 0, 0, 0x3 | 0x40 /* NOSIZE | NOMOVE | SHOWWINDOW */);
         SetWindowPos(h, new IntPtr(-2) /* NOTOPMOST */, 0, 0, 0, 0, 0x3 | 0x40);
         _settings.Activate();
+        if (Native.GetForegroundWindow() != h) Native.Focus(h);
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -400,7 +504,13 @@ public sealed class DockWindow : Window
         var work = mi.rcWork;
         Fit((Horizontal ? work.Right - work.Left : work.Bottom - work.Top) / s);
         var outer = _appBar?.Reserve(mi.rcMonitor, _cfg.Position, ReserveThickness()) ?? work;
+        double oldLength = _length;
         _length = (Horizontal ? work.Right - work.Left : work.Bottom - work.Top) / s;
+        if (Math.Abs(oldLength - _length) > 0.5)
+        {
+            var pins = Pins;
+            if (PinsThatFit(pins.Count, Transients.Count) != _items.Count(i => i.IsPinned)) Rebuild(pins, Transients);
+        }
 
         double cross = Math.Ceiling(EdgeGap + PadEdge + Base * Math.Max(Mag, 1) + Base * 0.5 + (Horizontal ? 46 : 240));
         double wl = work.Left / s, wt = work.Top / s, ww = (work.Right - work.Left) / s, wh = (work.Bottom - work.Top) / s;
@@ -697,6 +807,8 @@ public sealed class DockWindow : Window
         _sepBrush = Theme.Brush(light ? 0x29000000u : 0x38FFFFFFu);
         foreach (var it in new[] { _sep, _sepRun }) if (it.SepLine != null) it.SepLine.Background = _sepBrush;
         _dotBrush = Theme.Brush(light ? 0xA6000000u : 0xE6FFFFFFu);
+        _more.Icon = Shell.MoreIcon(_overflow.Count, light);
+        if (_more.Img != null) _more.Img.Source = _more.Icon;
         foreach (var it in _items) if (it.Dot != null) it.Dot.Fill = _dotBrush;
 
         _label.Background = Theme.Brush(light ? 0xEBFFFFFFu : 0xEB2C2C30u);
@@ -793,7 +905,7 @@ public sealed class DockWindow : Window
     void OnDragOver(object sender, DragEventArgs e)
     {
         // "Link" so Explorer never moves or deletes the file being dropped.
-        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Link : DragDropEffects.None;
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetDataPresent(LaunchpadWindow.DragFormat) ? DragDropEffects.Link : DragDropEffects.None;
         e.Handled = true;
         if (e.Effects == DragDropEffects.None) return;
         _mouseM = FromWin(e.GetPosition(_root)).M;
@@ -803,7 +915,15 @@ public sealed class DockWindow : Window
 
     void OnDrop(object sender, DragEventArgs e)
     {
-        if (e.Data.GetData(DataFormats.FileDrop) is string[] paths)
+        if (e.Data.GetData(LaunchpadWindow.DragFormat) is string location)
+        {
+            double m = FromWin(e.GetPosition(_root)).M;
+            AddPinned(location, _items.Count(i => i.IsPinned && i.CenterM < m));
+            SaveItems();
+            RefreshRunning();
+            e.Effects = DragDropEffects.Link;
+        }
+        else if (e.Data.GetData(DataFormats.FileDrop) is string[] paths)
         {
             double m = FromWin(e.GetPosition(_root)).M;
             int index = _items.Count(i => i.IsPinned && i.CenterM < m);
@@ -820,9 +940,9 @@ public sealed class DockWindow : Window
 
     void Activate(DockItem it, bool newInstance)
     {
-        if (it.IsStart)
+        if (it.IsStart || it.IsMore)
         {
-            Native.OpenStart();
+            ToggleLaunchpad();
             return;
         }
         if (it.IsTrash)
@@ -833,6 +953,7 @@ public sealed class DockWindow : Window
 
         it.Attention = false;
         it.BouncesLeft = 0;
+        CountLaunch(it.Location);
         if (!newInstance)
         {
             RefreshRunning();
@@ -918,6 +1039,13 @@ public sealed class DockWindow : Window
             menu.Items.Add(new Separator());
             menu.Items.Add(Item("Dock settings…", () => OpenSettings()));
         }
+        else if (it is { IsStart: true } or { IsMore: true })
+        {
+            menu.Items.Add(Item("Open Launchpad", () => ToggleLaunchpad()));
+            menu.Items.Add(Item("Windows Start menu", Native.OpenStart));
+            menu.Items.Add(new Separator());
+            menu.Items.Add(Item("Dock settings…", () => OpenSettings()));
+        }
         else if (it is { IsTrash: true })
         {
             menu.Items.Add(Item("Open", () => Activate(it, false)));
@@ -949,8 +1077,7 @@ public sealed class DockWindow : Window
         {
             _menuOpen = false;
             _lastOver = DateTime.Now;
-            Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out uint pid);
-            if (pid == Environment.ProcessId && previous != IntPtr.Zero && previous != _hwnd) Native.SetForegroundWindow(previous);
+            Native.HandBackFocus(Dispatcher, previous, _hwnd);
         };
         menu.IsOpen = true;
     }
@@ -973,7 +1100,7 @@ public sealed class DockWindow : Window
             MagItem("Off", 1), MagItem("Subtle", 1.35), MagItem("Medium", 1.75), MagItem("Large", 2.1)));
         menu.Items.Add(Item("Hide Windows taskbar", () => SetHideTaskbar(!_cfg.HideTaskbar), _cfg.HideTaskbar));
         menu.Items.Add(Item("Show status bar", () => SetStatusBar(!_cfg.ShowStatusBar), _cfg.ShowStatusBar));
-        menu.Items.Add(Item("Show Start button", () => { _cfg.ShowStart = !_cfg.ShowStart; _cfg.Save(); Rebuild(Pins, Transients); }, _cfg.ShowStart));
+        menu.Items.Add(Item("Show Launchpad button", () => { _cfg.ShowStart = !_cfg.ShowStart; _cfg.Save(); Rebuild(Pins, Transients); }, _cfg.ShowStart));
         menu.Items.Add(Sub("Hide dock",
             Item("Smart hide", () => SetHide(HideMode.Smart), _cfg.Hide == HideMode.Smart),
             Item("Keep space for the dock", () => SetHide(HideMode.KeepSpace), _cfg.Hide == HideMode.KeepSpace),
@@ -1202,7 +1329,7 @@ public sealed class DockWindow : Window
         var windows = WindowList.Get();
         var pins = Pins;
         var groups = new Dictionary<string, List<AppWindow>>();
-        foreach (var it in _items) it.Windows = new();
+        foreach (var it in _items.Concat(_overflow)) it.Windows = new();
 
         foreach (var w in windows)
         {

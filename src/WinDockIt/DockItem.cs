@@ -22,9 +22,11 @@ public sealed class DockItem
     [JsonIgnore] public bool IsTrash { get; init; }
     /// <summary>The Start button.</summary>
     [JsonIgnore] public bool IsStart { get; init; }
+    /// <summary>The "+N" tile standing in for pinned apps that don't fit; opens Launchpad.</summary>
+    [JsonIgnore] public bool IsMore { get; init; }
     /// <summary>A running app that isn't pinned; it leaves the dock when its last window closes.</summary>
     [JsonIgnore] public bool IsTransient { get; init; }
-    [JsonIgnore] public bool IsPinned => !IsSeparator && !IsTrash && !IsStart && !IsTransient;
+    [JsonIgnore] public bool IsPinned => !IsSeparator && !IsTrash && !IsStart && !IsMore && !IsTransient;
     /// <summary>Something that can have windows: pinned or running apps.</summary>
     [JsonIgnore] public bool IsApp => IsPinned || IsTransient;
 

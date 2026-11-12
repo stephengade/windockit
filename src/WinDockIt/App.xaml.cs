@@ -19,10 +19,12 @@ public partial class App : Application
         _mutex = new Mutex(true, "WinDockIt.SingleInstance", out bool created);
         if (!created)
         {
-            // Already running: opening WinDockIt again shows its settings, like reopening a Mac app.
+            // Already running: opening WinDockIt again shows its settings, like reopening a Mac app;
+            // "WinDockIt --launchpad" opens Launchpad instead (handy for a keyboard shortcut).
             // We were just launched by the user, so we may bring a window forward; pass that on to the dock.
             AllowSetForegroundWindow(-1 /* ASFW_ANY */);
-            try { using var show = EventWaitHandle.OpenExisting(ShowSettingsEvent); show.Set(); } catch { }
+            string name = e.Args.Contains("--launchpad", StringComparer.OrdinalIgnoreCase) ? ShowLaunchpadEvent : ShowSettingsEvent;
+            try { using var show = EventWaitHandle.OpenExisting(name); show.Set(); } catch { }
             Shutdown();
             return;
         }
@@ -36,21 +38,30 @@ public partial class App : Application
         base.OnStartup(e);
         var dock = new DockWindow();
         dock.Start();
-        _showSettings = new EventWaitHandle(false, EventResetMode.AutoReset, ShowSettingsEvent);
+        Listen(ShowSettingsEvent, dock, () => dock.OpenSettings());
+        Listen(ShowLaunchpadEvent, dock, dock.ToggleLaunchpad);
+        if (e.Args.Contains("--launchpad", StringComparer.OrdinalIgnoreCase)) dock.ToggleLaunchpad();
+    }
+
+    /// <summary>Runs <paramref name="action"/> on the dock whenever another launch of WinDockIt signals <paramref name="name"/>.</summary>
+    static void Listen(string name, DockWindow dock, Action action)
+    {
+        var signal = new EventWaitHandle(false, EventResetMode.AutoReset, name);
+        s_signals.Add(signal);
         new Thread(() =>
         {
-            while (_showSettings.WaitOne())
+            while (signal.WaitOne())
                 dock.Dispatcher.InvokeAsync(() =>
                 {
-                    try { dock.OpenSettings(); } catch (Exception ex) { Log(ex); }
+                    try { action(); } catch (Exception ex) { Log(ex); }
                 });
-        }) { IsBackground = true, Name = "Show settings" }.Start();
+        }) { IsBackground = true, Name = name }.Start();
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(int pid);
 
-    const string ShowSettingsEvent = "WinDockIt.ShowSettings";
-    EventWaitHandle? _showSettings;
+    const string ShowSettingsEvent = "WinDockIt.ShowSettings", ShowLaunchpadEvent = "WinDockIt.ShowLaunchpad";
+    static readonly List<EventWaitHandle> s_signals = new();
 
     internal static void Log(Exception ex)
     {

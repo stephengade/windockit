@@ -51,6 +51,7 @@ public sealed class SettingsWindow : Window
     {
         _dock = dock;
         Title = "WinDockIt Settings";
+        Icon = Shell.AppIcon();
         Width = 780;
         Height = 600;
         MinWidth = 640;
@@ -219,7 +220,7 @@ public sealed class SettingsWindow : Window
             Row("Hide the Windows taskbar", "Comes back when WinDockIt quits.", Toggle(cfg.HideTaskbar, _dock.SetHideTaskbar)),
             Row("Show running apps that aren't pinned", "They appear after a divider and leave when closed.",
                 Toggle(cfg.ShowRunning, _dock.SetShowRunning)),
-            Row("Show Start button", null, Toggle(cfg.ShowStart, _dock.SetShowStart)),
+            Row("Show Launchpad button", "Your apps A–Z, with search. Right-click it for the Windows Start menu.", Toggle(cfg.ShowStart, _dock.SetShowStart)),
             Row("Start with Windows", null, Toggle(DockWindow.IsStartup, DockWindow.SetStartup)));
     }
 

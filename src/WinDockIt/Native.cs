@@ -95,6 +95,25 @@ internal static class Native
         SetWindowLongPtr(h, GWL_EXSTYLE, new IntPtr(ex | flags));
     }
 
+    /// <summary>
+    /// After one of our menus closes, give the focus back to the app that had it. Deferred until the
+    /// clicked item has run, and skipped if that item opened one of our own windows (like Settings),
+    /// which must stay in front.
+    /// </summary>
+    public static void HandBackFocus(System.Windows.Threading.Dispatcher d, IntPtr previous, IntPtr except)
+    {
+        if (previous == IntPtr.Zero || previous == except) return;
+        d.InvokeAsync(() =>
+        {
+            var fg = GetForegroundWindow();
+            GetWindowThreadProcessId(fg, out uint pid);
+            if (pid != Environment.ProcessId) return;   // something else already took it
+            foreach (System.Windows.Window w in System.Windows.Application.Current.Windows)
+                if (w.IsVisible && w.ShowInTaskbar && new System.Windows.Interop.WindowInteropHelper(w).Handle == fg) return;
+            SetForegroundWindow(previous);
+        }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+    }
+
     /// <summary>Bring a window to the front, restoring it if minimized.</summary>
     public static void Focus(IntPtr h)
     {

@@ -105,9 +105,13 @@ internal static class Shell
     }
 
     /// <summary>A tidy rounded tile with the item's initial, for things with no usable icon.</summary>
+    static readonly Dictionary<string, ImageSource> s_letters = new();
+
     public static ImageSource LetterIcon(string name)
     {
         string letter = string.IsNullOrWhiteSpace(name) ? "?" : name.Trim()[..1].ToUpperInvariant();
+        lock (s_letters)
+            if (s_letters.TryGetValue(letter, out var cached)) return cached;
         var dv = new DrawingVisual();
         using (var dc = dv.RenderOpen())
         {
@@ -121,22 +125,23 @@ internal static class Shell
         var rtb = new RenderTargetBitmap(256, 256, 96, 96, PixelFormats.Pbgra32);
         rtb.Render(dv);
         rtb.Freeze();
+        lock (s_letters) s_letters[letter] = rtb;
         return rtb;
     }
 
-    /// <summary>The Start button: a blue tile with a 2×2 grid of rounded squares.</summary>
-    public static ImageSource StartIcon()
+    /// <summary>The dock's overflow tile: a frosted square with "+N".</summary>
+    public static ImageSource MoreIcon(int count, bool light)
     {
         var dv = new DrawingVisual();
         using (var dc = dv.RenderOpen())
         {
-            var bg = new LinearGradientBrush(Color.FromRgb(0x4D, 0x9F, 0xFF), Color.FromRgb(0x1E, 0x5B, 0xE6), 90);
-            dc.DrawRoundedRectangle(bg, null, new Rect(16, 16, 224, 224), 52, 52);
-            var fg = new SolidColorBrush(Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF));
-            const double sq = 50, gap = 12, x0 = 128 - sq - gap / 2;
-            for (int r = 0; r < 2; r++)
-                for (int c = 0; c < 2; c++)
-                    dc.DrawRoundedRectangle(fg, null, new Rect(x0 + c * (sq + gap), x0 + r * (sq + gap), sq, sq), 12, 12);
+            var bg = new SolidColorBrush(light ? Color.FromArgb(0x26, 0, 0, 0) : Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+            var edge = new Pen(new SolidColorBrush(light ? Color.FromArgb(0x1F, 0, 0, 0) : Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF)), 4);
+            dc.DrawRoundedRectangle(bg, edge, new Rect(18, 18, 220, 220), 52, 52);
+            var ft = new FormattedText("+" + count, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+                new Typeface(new FontFamily("Segoe UI Variable Display, Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal),
+                count > 99 ? 72 : 92, light ? new SolidColorBrush(Color.FromRgb(0x1C, 0x1C, 0x1E)) : Brushes.White, 1.0);
+            dc.DrawText(ft, new Point(128 - ft.Width / 2, 128 - ft.Height / 2));
         }
         var rtb = new RenderTargetBitmap(256, 256, 96, 96, PixelFormats.Pbgra32);
         rtb.Render(dv);
@@ -144,8 +149,25 @@ internal static class Shell
         return rtb;
     }
 
+    static BitmapImage? s_appIcon;
+
+    /// <summary>The WinDockIt icon. Used for the app itself and for the dock's and status bar's Start buttons.</summary>
+    public static ImageSource AppIcon()
+    {
+        if (s_appIcon != null) return s_appIcon;
+        var bi = new BitmapImage();
+        bi.BeginInit();
+        bi.UriSource = new Uri("pack://application:,,,/Assets/WinDockIt.png");
+        bi.CacheOption = BitmapCacheOption.OnLoad;
+        bi.EndInit();
+        bi.Freeze();
+        return s_appIcon = bi;
+    }
+
     public static string DisplayName(string path)
     {
+        if (path.StartsWith(AppsFolder, StringComparison.OrdinalIgnoreCase) && ShellName(path) is { Length: > 0 } shellName)
+            return shellName;
         try
         {
             if (Directory.Exists(path))

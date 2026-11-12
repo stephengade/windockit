@@ -27,7 +27,7 @@ public sealed class StatusBar : Window
 
     readonly GlassBackdrop _glass = new();
     readonly Func<IntPtr, DockItem?> _itemFor;
-    readonly Action _hideBar, _openSettings;
+    readonly Action _hideBar, _openSettings, _openLaunchpad;
     readonly DispatcherTimer _tick;
     AppBar? _appBar;
     IntPtr _hwnd;
@@ -77,8 +77,9 @@ public sealed class StatusBar : Window
         "ShellHost", "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost", "SearchApp", "LockApp", "TextInputHost",
     };
 
-    public StatusBar(Func<IntPtr, DockItem?> itemFor, Action hideBar, Action openSettings, HideMode hideMode)
+    public StatusBar(Func<IntPtr, DockItem?> itemFor, Action hideBar, Action openSettings, Action openLaunchpad, HideMode hideMode)
     {
+        _openLaunchpad = openLaunchpad;
         _hideMode = hideMode;
         _openSettings = openSettings;
         _itemFor = itemFor;
@@ -101,7 +102,7 @@ public sealed class StatusBar : Window
         _root.Children.Add(_right);
 
         // Left: Start, then the app you're working in.
-        _left.Children.Add(Button(StartIcon(), Native.OpenStart));
+        _left.Children.Add(Button(StartIcon(), () => _openLaunchpad()));
         _left.Children.Add(Button(_appText, ShowAppMenu));
 
         // Right: status items, then the clock.
@@ -504,8 +505,7 @@ public sealed class StatusBar : Window
         {
             _menuOpen = false;
             if (owner != null) owner.Background = Theme.Brush(0x01000000u);
-            Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out uint pid);
-            if (pid == Environment.ProcessId && previous != IntPtr.Zero) Native.SetForegroundWindow(previous);
+            Native.HandBackFocus(Dispatcher, previous, _hwnd);
         };
         menu.IsOpen = true;
     }
@@ -545,19 +545,12 @@ public sealed class StatusBar : Window
         return b;
     }
 
-    /// <summary>The Windows logo, drawn as four squares so it follows the bar's text colour.</summary>
-    UIElement StartIcon()
+    /// <summary>The WinDockIt icon, in place of the Mac's Apple logo.</summary>
+    static UIElement StartIcon()
     {
-        var g = new Grid { Width = 13, Height = 13 };
-        for (int i = 0; i < 4; i++)
-        {
-            var r = new System.Windows.Shapes.Rectangle { Width = 6, Height = 6, RadiusX = 0.8, RadiusY = 0.8 };
-            r.HorizontalAlignment = i % 2 == 0 ? HorizontalAlignment.Left : HorizontalAlignment.Right;
-            r.VerticalAlignment = i < 2 ? VerticalAlignment.Top : VerticalAlignment.Bottom;
-            _iconFills.Add(r);
-            g.Children.Add(r);
-        }
-        return g;
+        var img = new Image { Source = Shell.AppIcon(), Width = 18, Height = 18 };
+        RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
+        return img;
     }
 
     /// <summary>Two little switches, like the Mac's Control Center icon.</summary>

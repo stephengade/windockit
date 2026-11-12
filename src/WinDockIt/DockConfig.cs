@@ -34,6 +34,8 @@ public sealed class DockConfig
     /// <summary>The taskbar's own auto-hide setting before WinDockIt hid it; set only while it's hidden.</summary>
     public bool? TaskbarWasAutoHide { get; set; }
     public List<DockItem> Items { get; set; } = new();
+    /// <summary>How often each app was opened from the dock or Launchpad, for Launchpad's "Frequently used".</summary>
+    public Dictionary<string, int> LaunchCounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     [JsonIgnore]
     public HideMode Hide
@@ -68,6 +70,7 @@ public sealed class DockConfig
                     c.Magnification = Math.Clamp(c.Magnification, 1, 3);
                     c.IconSpacing = Math.Clamp(c.IconSpacing, 2, 32);
                     c.Items ??= new();
+                    c.LaunchCounts = new(c.LaunchCounts ?? new(), StringComparer.OrdinalIgnoreCase);
                     c.Items.RemoveAll(i => string.IsNullOrWhiteSpace(i.Location));
                     c.Migrate();
                     return c;

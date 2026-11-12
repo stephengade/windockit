@@ -15,6 +15,11 @@
     <Product>WinDockIt</Product>
     <Description>A clean, modern dock for Windows.</Description>
     <Version>0.1.0</Version>
+    <ApplicationIcon>Assets\WinDockIt.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\WinDockIt.png" />
+  </ItemGroup>
 
 </Project>
