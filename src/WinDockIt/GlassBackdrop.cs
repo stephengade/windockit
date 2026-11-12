@@ -40,9 +40,10 @@ internal sealed class GlassBackdrop : IDisposable
     readonly HwndSource _window;
     readonly Compositor? _compositor;
     readonly DesktopWindowTarget? _target;
-    readonly SpriteVisual? _sprite;
-    readonly CompositionRoundedRectangleGeometry? _shape;
-    (int, int, int, int, int, int, int, int, int) _last;
+    readonly SpriteVisual?[] _sprites = new SpriteVisual?[2];
+    readonly CompositionRoundedRectangleGeometry?[] _shapes = new CompositionRoundedRectangleGeometry?[2];
+    string _last = "";
+    float _opacity = 1;
 
     public IntPtr Handle => _window.Handle;
 
@@ -69,13 +70,19 @@ internal sealed class GlassBackdrop : IDisposable
             _compositor = new Compositor();
             _target = CreateTarget(_compositor, _window.Handle);
 
-            _sprite = _compositor.CreateSpriteVisual();
-            _sprite.Brush = _compositor.CreateHostBackdropBrush();
-            _shape = _compositor.CreateRoundedRectangleGeometry();
-            _sprite.Clip = _compositor.CreateGeometricClip(_shape);
-
+            // Two pieces of glass: the dock, and the second island of the Split style.
             var root = _compositor.CreateContainerVisual();
-            root.Children.InsertAtTop(_sprite);
+            var brush = _compositor.CreateHostBackdropBrush();
+            for (int i = 0; i < 2; i++)
+            {
+                var sprite = _compositor.CreateSpriteVisual();
+                sprite.Brush = brush;
+                _shapes[i] = _compositor.CreateRoundedRectangleGeometry();
+                sprite.Clip = _compositor.CreateGeometricClip(_shapes[i]);
+                sprite.IsVisible = i == 0;
+                root.Children.InsertAtTop(sprite);
+                _sprites[i] = sprite;
+            }
             _target.Root = root;
             IsBlurAvailable = true;
         }
@@ -93,18 +100,39 @@ internal sealed class GlassBackdrop : IDisposable
     /// Window bounds in physical pixels, then the rounded glass shape relative to the window.
     /// The shape may extend past the window; that part is simply cut off.
     /// </summary>
-    public void SetShape(int x, int y, int w, int h, int rx, int ry, int rw, int rh, int radius)
+    public void SetShape(int x, int y, int w, int h, int rx, int ry, int rw, int rh, int radius) =>
+        SetShapes(x, y, w, h, [(rx, ry, rw, rh, radius)]);
+
+    /// <summary>Like <see cref="SetShape"/>, with one or two rounded shapes, each relative to the window.</summary>
+    public void SetShapes(int x, int y, int w, int h, (int X, int Y, int W, int H, int Radius)[] shapes)
     {
-        var key = (x, y, w, h, rx, ry, rw, rh, radius);
+        var key = $"{x},{y},{w},{h}|" + string.Join("|", shapes);
         if (key == _last) return;
         _last = key;
 
         SetWindowPos(Handle, IntPtr.Zero, x, y, Math.Max(w, 0), Math.Max(h, 0), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
-        if (_sprite == null || _shape == null) return;
-        _sprite.Offset = new Vector3(rx, ry, 0);
-        _sprite.Size = new Vector2(rw, rh);
-        _shape.Size = new Vector2(rw, rh);
-        _shape.CornerRadius = new Vector2(radius, radius);
+        for (int i = 0; i < _sprites.Length; i++)
+        {
+            var sprite = _sprites[i];
+            var shape = _shapes[i];
+            if (sprite == null || shape == null) continue;
+            sprite.IsVisible = i < shapes.Length;
+            if (i >= shapes.Length) continue;
+            var s = shapes[i];
+            sprite.Offset = new Vector3(s.X, s.Y, 0);
+            sprite.Size = new Vector2(s.W, s.H);
+            shape.Size = new Vector2(s.W, s.H);
+            shape.CornerRadius = new Vector2(s.Radius, s.Radius);
+        }
+    }
+
+    /// <summary>Fades the glass, for the Minimal style that only shows it under the pointer.</summary>
+    public void SetOpacity(double opacity)
+    {
+        float o = (float)Math.Clamp(opacity, 0, 1);
+        if (Math.Abs(o - _opacity) < 0.001) return;
+        _opacity = o;
+        foreach (var s in _sprites) if (s != null) s.Opacity = o;
     }
 
     static void EnsureDispatcherQueue()

@@ -7,12 +7,14 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 ## Features
 
 - **Frosted glass.** Real blur of whatever is behind the dock, with smooth rounded corners. It follows your Windows light/dark theme and the *Transparency effects* setting.
+- **Six dock styles.** *Floating* (rounded glass lifted off the edge), *Full width* (edge to edge, like the taskbar), *Attached* (centred, resting on the edge), *Compact pill* (smaller icons in a capsule), *Split* (pinned apps in one piece of glass, open apps and the Recycle Bin in another) and *Minimal* (no glass until you point at the dock). Pick one in Settings › Appearance.
+- **Colour themes.** Tint the glass of the dock, status bar and Launchpad (Graphite, Ocean, Plum, Rose, Forest or Sunset) and choose how strong the tint is. Pick an accent colour for the running dots, Launchpad's letter index and Settings, or follow your Windows accent.
 - **Magnification.** Icons swell smoothly as you move across them. The icon under your cursor stays put.
 - **Any edge.** Bottom, top, left or right, switchable from the dock's menu.
 - **Smart hide.** Windows get the whole screen. The dock stays in view and only slides away while a window overlaps it. Touch the screen edge to bring it back. You can instead keep a strip of the screen for the dock, like the taskbar, or have it always auto-hide.
 - **Always fits.** No scrolling: when there are too many items, every icon shrinks evenly until the whole dock fits. Icons never get smaller than 32px: past that, the last pinned apps move into a **+N** tile that opens Launchpad.
 - **Import from taskbar.** Brings over your pinned taskbar apps, in order, including Store apps. On first run the dock starts with them.
-- **Running indicators.** A dot under every app with an open window.
+- **Running indicators.** A dot under every app with an open window, in your accent colour.
 - **Every open app.** Running apps that aren't pinned appear after a divider, and leave when you close them. Right-click › **Keep in Dock** pins one. Windows are grouped by app the same way the taskbar groups them, so web apps and Store apps get their own icons.
 - **Asks for attention.** When an app flashes for attention, its icon bounces and its dot turns orange until you look.
 - **Launchpad.** The WinDockIt icon at the start of the dock (and at the top left of the status bar) fills the screen with all your apps in large icons over a blurred wallpaper, like the Mac. It shows pinned apps that didn't fit on the dock, Suggestions (apps that are open, then the ones you use most), and every app grouped A–Z, Store apps included. Hover or drag along the letter index on the right to jump through the alphabet, or use Page Up and Page Down. The dock stays on top while it's open. Start typing to search; arrow keys and Enter open an app. Esc or a click on an empty area closes it. Drag an app onto the dock to pin it, or right-click › **Keep in Dock**. Right-click the WinDockIt icon for the Windows Start menu.
@@ -23,7 +25,7 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 - **Pin anything.** Drag apps, shortcuts, files or folders onto the dock, or use **Add app…**.
 - **Reorder and remove.** Drag icons to reorder. Drag one off the dock and let go to remove it.
 - **Recycle Bin.** Shows whether it's full or empty, and can be emptied from its menu.
-- **Settings window.** Appearance (position, icon size, space between icons, magnification, light or dark theme, frosted glass), Behaviour (how the dock and status bar hide, status bar, taskbar, running apps, Launchpad button, start with Windows), and your pinned apps in order. Every change applies to the dock straight away. Open it from the dock's menu, the status bar's menu, or by launching WinDockIt again while it's running.
+- **Settings window.** Appearance (position, icon size, space between icons, magnification, dock style, light or dark theme, glass tint, accent colour, frosted glass), Behaviour (how the dock and status bar hide, status bar, taskbar, running apps, Launchpad button, start with Windows), and your pinned apps in order. Every change applies to the dock straight away. Open it from the dock's menu, the status bar's menu, or by launching WinDockIt again while it's running.
 - **Stays out of fullscreen.** The dock hides while a game or video is fullscreen.
 - **Start with Windows.** Optional, from the menu.
 
@@ -67,6 +69,10 @@ Settings and pinned items live in `%APPDATA%\WinDockIt\config.json`. You can edi
   "iconSize": 46,
   "magnification": 1.75,
   "smartHide": true,
+  "style": "Floating",
+  "tint": "Ocean",
+  "tintStrength": 35,
+  "accent": "Windows",
   "items": [
     { "name": "Terminal", "location": "shell:AppsFolder\\Microsoft.WindowsTerminal_8wekyb3d8bbwe!App", "processName": "WindowsTerminal" }
   ]

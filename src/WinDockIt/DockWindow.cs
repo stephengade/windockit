@@ -20,12 +20,8 @@ namespace WinDockIt;
 /// </summary>
 public sealed class DockWindow : Window
 {
-    const double EdgeGap = 10;   // gap between screen edge and glass
-    const double PadEdge = 12;   // glass padding on the edge side (room for the running dot)
-    const double PadOuter = 9;   // glass padding on the far side
-    const double PadMain = 7;    // glass padding at each end
     const double SepSlot = 17;   // width of the divider slot
-    const double ReserveGap = 6; // space kept between the glass and maximized windows
+    const double SplitGap = 16;  // space between the two pieces of glass in the Split style
     const double MinIcon = 16;   // smallest icons get when shrinking to fit
     const double OverflowIcon = 32; // below this, extra pinned apps move into the "+N" tile
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -47,6 +43,10 @@ public sealed class DockWindow : Window
     readonly Border _shadow = new() { Background = Brushes.Black };
     readonly Border _tint = new() { BorderThickness = new Thickness(1), IsHitTestVisible = false };
     readonly Border _shine = new() { BorderThickness = new Thickness(1), IsHitTestVisible = false };
+    // The second piece of glass, used only by the Split style.
+    readonly Border _shadow2 = new() { Background = Brushes.Black };
+    readonly Border _tint2 = new() { BorderThickness = new Thickness(1), IsHitTestVisible = false };
+    readonly Border _shine2 = new() { BorderThickness = new Thickness(1), IsHitTestVisible = false };
     readonly Rectangle _hit = new() { Fill = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)) };
     readonly Canvas _itemLayer = new();
     readonly Border _label = new()
@@ -71,8 +71,8 @@ public sealed class DockWindow : Window
     double? _mouseM;
     DockItem? _hovered, _pressItem;
     Point _pressPoint;
-    double _shift, _hideT, _plateM0, _plateM1, _radius;
-    Rect _plateRect;
+    double _shift, _hideT, _plateM0, _plateM1, _radius, _glassT = 1;
+    Rect _plateRect, _plateRect2 = Rect.Empty;
     DateTime _lastOver = DateTime.Now;
     long _trashCount = -1;
 
@@ -82,6 +82,22 @@ public sealed class DockWindow : Window
     double Base => _base;
     double Mag => _cfg.Magnification;
     double PlateDepth => PadEdge + Base + PadOuter;
+
+    // ───── what changes with the dock style ─────
+    DockStyle Style => _cfg.Style;
+    /// <summary>Styles whose glass sits on the screen edge, so windows meet it with no gap.</summary>
+    bool OnEdge => Style is DockStyle.FullWidth or DockStyle.Attached;
+    bool Compact => Style == DockStyle.Pill;
+    double EdgeGap => OnEdge ? 0 : 10;               // gap between screen edge and glass
+    double PadEdge => Compact ? 9 : 12;              // glass padding on the edge side (room for the running dot)
+    double PadOuter => Compact ? 6 : 9;              // glass padding on the far side
+    double PadMain => Compact ? Math.Round(PlateDepth * 0.34) : 7;   // glass padding at each end (more for the capsule's round ends)
+    double ReserveGap => OnEdge ? 0 : 6;             // space kept between the glass and maximized windows
+    /// <summary>The configured icon size; the capsule uses smaller icons and lets magnification make up for it.</summary>
+    double IconCap => Compact ? Math.Round(_cfg.IconSize * 0.72) : _cfg.IconSize;
+    /// <summary>In the Split style, the divider where the dock breaks into two pieces of glass.</summary>
+    DockItem? SplitAt => Style == DockStyle.Split ? _items.FirstOrDefault(i => i.IsSeparator) : null;
+    double SepWidth(DockItem it) => it == SplitAt ? SplitGap + 2 * PadMain : SepSlot;
     bool Horizontal => _cfg.Position is DockPosition.Bottom or DockPosition.Top;
 
     public DockWindow()
@@ -89,6 +105,9 @@ public sealed class DockWindow : Window
         _cfg = DockConfig.Load();
         Theme.Mode = _cfg.Theme;
         Theme.GlassOn = _cfg.Glass;
+        Theme.Tint = _cfg.Tint;
+        Theme.TintStrength = _cfg.TintStrength / 100;
+        Theme.AccentChoice = _cfg.Accent;
         _base = _cfg.IconSize;
 
         Title = AppName;
@@ -109,7 +128,9 @@ public sealed class DockWindow : Window
         };
         _shadowHost.Children.Add(_shadow);
         _label.Child = _labelText;
-        foreach (var el in new UIElement[] { _shadowHost, _tint, _shine, _hit, _itemLayer, _label })
+        _shadow2.Effect = _shadow.Effect;
+        _shadowHost.Children.Add(_shadow2);
+        foreach (var el in new UIElement[] { _shadowHost, _tint, _shine, _tint2, _shine2, _hit, _itemLayer, _label })
             _root.Children.Add(el);
 
         foreach (var it in new[] { _sep, _sepRun, _trash, _start, _more }) Prepare(it);
@@ -284,9 +305,9 @@ public sealed class DockWindow : Window
     int PinsThatFit(int pins, int transients)
     {
         if (_length <= 0 || pins == 0) return pins;
-        double min = Math.Min(OverflowIcon, _cfg.IconSize);
+        double min = Math.Min(OverflowIcon, IconCap);
         double avail = _length - 2 * (EdgeGap + PadMain);
-        double seps = (transients > 0 ? 2 : 1) * SepSlot;
+        double seps = (transients > 0 ? 2 : 1) * SepSlot + (Style == DockStyle.Split ? SplitGap + 2 * PadMain - SepSlot : 0);
         double growth = 2.4 * Math.Max(Mag - 1, 0);
         int others = (_cfg.ShowStart ? 1 : 0) + transients + 1;   // Launchpad, running apps, Recycle Bin
         // Same sum as Fit(): n icons at size `min`, their spacing, and the magnified row's growth.
@@ -477,6 +498,10 @@ public sealed class DockWindow : Window
     internal void SetShowRunning(bool on) { _cfg.ShowRunning = on; _cfg.Save(); RefreshRunning(); }
     internal void SetTheme(ThemeMode mode) { _cfg.Theme = Theme.Mode = mode; _cfg.Save(); ApplyTheme(); }
     internal void SetGlass(bool on) { _cfg.Glass = Theme.GlassOn = on; _cfg.Save(); ApplyTheme(); }
+    internal void SetStyle(DockStyle style) { _cfg.Style = style; _cfg.Save(); _glassT = 1; Rebuild(Pins, Transients); ApplyLayout(); }
+    internal void SetTint(GlassTint tint) { _cfg.Tint = Theme.Tint = tint; _cfg.Save(); ApplyTheme(); }
+    internal void SetTintStrength(double v) { _cfg.TintStrength = Math.Clamp(v, 0, 100); Theme.TintStrength = _cfg.TintStrength / 100; _cfg.Save(); ApplyTheme(); }
+    internal void SetAccent(AccentColor accent) { _cfg.Accent = Theme.AccentChoice = accent; _cfg.Save(); ApplyTheme(); }
     internal void RemovePin(DockItem it) => Unpin(it);
 
     /// <summary>Moves a pinned item one place along the dock.</summary>
@@ -562,13 +587,13 @@ public sealed class DockWindow : Window
     void Fit(double length)
     {
         int n = _items.Count(i => !i.IsSeparator);
-        if (n == 0) { _base = _cfg.IconSize; return; }
+        if (n == 0) { _base = IconCap; return; }
         double avail = length - 2 * (EdgeGap + PadMain);
-        double seps = _items.Count(i => i.IsSeparator) * SepSlot;
+        double seps = _items.Where(i => i.IsSeparator).Sum(SepWidth);
         // Cosine magnification adds about 2.4 icons' worth of (Mag - 1) to the row's length.
         double growth = 2.4 * Math.Max(Mag - 1, 0);
         double fit = (avail - seps - n * Spacing) / (n + growth);
-        _base = Math.Clamp(Math.Floor(fit), MinIcon, _cfg.IconSize);
+        _base = Math.Clamp(Math.Floor(fit), MinIcon, IconCap);
     }
 
     Rect ToWin(double m0, double m1, double c0, double c1)
@@ -591,9 +616,10 @@ public sealed class DockWindow : Window
         _ => (p.Y, ActualWidth - p.X),
     };
 
-    double BaseSlot(DockItem it) => it.IsSeparator ? SepSlot : Base + Spacing;
-    double CurSlot(DockItem it) => it.IsSeparator ? SepSlot : it.Size + Spacing;
-    double Spacing => _cfg.IconSpacing;   // space between icons
+    double BaseSlot(DockItem it) => it.IsSeparator ? SepWidth(it) : Base + Spacing;
+    double CurSlot(DockItem it) => it.IsSeparator ? SepWidth(it) : it.Size + Spacing;
+    /// <summary>Space between icons; the capsule packs them closer.</summary>
+    double Spacing => Compact ? Math.Max(2, Math.Round(_cfg.IconSpacing * 0.6)) : _cfg.IconSpacing;
 
     const double IconCanvas = 192;
 
@@ -686,15 +712,19 @@ public sealed class DockWindow : Window
         m = hi >= lo ? Math.Clamp(m, lo, hi) : L / 2 - w1 / 2; // keep the whole row on screen
         double pm0 = m - PadMain, pm1 = m + w1 + PadMain, pc0 = EdgeGap + cOff, pc1 = pc0 + PlateDepth;
         double iconBase = EdgeGap + cOff + PadEdge, maxSize = B;
+        var splitAt = SplitAt;
+        double split0 = double.NaN, split1 = double.NaN;
 
         foreach (var it in _items)
         {
             double slot = CurSlot(it), mc = m + slot / 2;
+            if (it == splitAt) { split0 = m + PadMain; split1 = m + slot - PadMain; }
             m += slot;
             it.CenterM = mc;
 
             if (it.IsSeparator)
             {
+                it.SepLine!.Visibility = it == splitAt ? Visibility.Hidden : Visibility.Visible;
                 PlaceScaled(it.SepLine!, ToWin(mc - 0.5, mc + 0.5, iconBase + B * 0.18, iconBase + B * 0.82));
                 continue;
             }
@@ -712,17 +742,33 @@ public sealed class DockWindow : Window
         }
 
         _plateM0 = pm0; _plateM1 = pm1;
-        _plateRect = ToWin(pm0, pm1, pc0, pc1);
-        _radius = Math.Round(PlateDepth * 0.3);
-        Place(_tint, _plateRect);
-        Place(_shine, Inflate(_plateRect, -1));
-        Place(_shadow, _plateRect);
-        _tint.CornerRadius = _shadow.CornerRadius = new CornerRadius(_radius);
-        _shine.CornerRadius = new CornerRadius(Math.Max(_radius - 1, 0));
+        _radius = Style switch
+        {
+            DockStyle.FullWidth => 0,
+            DockStyle.Pill => Math.Floor(PlateDepth / 2),
+            _ => Math.Round(PlateDepth * 0.3),
+        };
+        // Edge styles push the glass past the screen edge, so the corners and border on that side
+        // are cut off and it reads as part of the edge. Full width also runs past both ends.
+        double gm0 = pm0, gm1 = pm1, gc0 = pc0;
+        if (Style == DockStyle.FullWidth) { gm0 = -2; gm1 = L + 2; gc0 = pc0 - 2; }
+        else if (Style == DockStyle.Attached) gc0 = pc0 - _radius - 2;
+        bool split = !double.IsNaN(split0);
+        _plateRect = ToWin(gm0, split ? split0 : gm1, gc0, pc1);
+        _plateRect2 = split ? ToWin(split1, gm1, gc0, pc1) : Rect.Empty;
+        PlacePlate(_tint, _shine, _shadow, _plateRect);
+        PlacePlate(_tint2, _shine2, _shadow2, _plateRect2);
+        Geometry holes = new RectangleGeometry(_plateRect, _radius, _radius);
+        if (split) holes = new CombinedGeometry(GeometryCombineMode.Union, holes, new RectangleGeometry(_plateRect2, _radius, _radius));
         _shadowHost.Clip = new CombinedGeometry(GeometryCombineMode.Exclude,
-            new RectangleGeometry(new Rect(0, 0, ActualWidth, ActualHeight)),
-            new RectangleGeometry(_plateRect, _radius, _radius));
+            new RectangleGeometry(new Rect(0, 0, ActualWidth, ActualHeight)), holes);
         Place(_hit, ToWin(pm0, pm1, Math.Min(0, pc0), Math.Max(pc1, iconBase + maxSize + 8)));
+
+        // Minimal: the glass fades in only while the dock is in use.
+        bool inUse = Style != DockStyle.Minimal || _mouseM != null || _dragging || _menuOpen || _pressItem != null;
+        moving |= Approach(ref _glassT, inUse ? 1 : 0, 0.2, 0.01);
+        _shadowHost.Opacity = _tint.Opacity = _shine.Opacity = _tint2.Opacity = _shine2.Opacity = _glassT;
+        _plate.SetOpacity(_glassT);
 
         PlaceGlass();
         UpdateLabel();
@@ -732,6 +778,18 @@ public sealed class DockWindow : Window
             _animating = false;
             CompositionTarget.Rendering -= OnFrame;
         }
+    }
+
+    void PlacePlate(Border tint, Border shine, Border shadow, Rect r)
+    {
+        var vis = r.IsEmpty ? Visibility.Collapsed : Visibility.Visible;
+        tint.Visibility = shine.Visibility = shadow.Visibility = vis;
+        if (r.IsEmpty) return;
+        Place(tint, r);
+        Place(shine, Inflate(r, -1));
+        Place(shadow, r);
+        tint.CornerRadius = shadow.CornerRadius = new CornerRadius(_radius);
+        shine.CornerRadius = new CornerRadius(Math.Max(_radius - 1, 0));
     }
 
     static Rect Inflate(Rect r, double by)
@@ -757,18 +815,19 @@ public sealed class DockWindow : Window
     /// <summary>Moves the blur window under the glass, clipped to this window so it never covers the taskbar.</summary>
     void PlaceGlass()
     {
-        var vis = Rect.Intersect(_plateRect, new Rect(0, 0, ActualWidth, ActualHeight));
-        if (vis.IsEmpty || vis.Width < 1 || vis.Height < 1)
+        var all = _plateRect;
+        if (!_plateRect2.IsEmpty) all.Union(_plateRect2);
+        var vis = Rect.Intersect(all, new Rect(0, 0, ActualWidth, ActualHeight));
+        if (vis.IsEmpty || vis.Width < 1 || vis.Height < 1 || _glassT < 0.01)
         {
             _plate.SetShape(-32000, -32000, 0, 0, 0, 0, 0, 0, 0);
             return;
         }
         double s = _dpi;
         int R(double v) => (int)Math.Round(v * s);
-        _plate.SetShape(
-            R(Left + vis.X), R(Top + vis.Y), R(vis.Width), R(vis.Height),
-            R(_plateRect.X - vis.X), R(_plateRect.Y - vis.Y), R(_plateRect.Width), R(_plateRect.Height),
-            R(_radius));
+        (int, int, int, int, int) Shape(Rect r) => (R(r.X - vis.X), R(r.Y - vis.Y), R(r.Width), R(r.Height), R(_radius));
+        _plate.SetShapes(R(Left + vis.X), R(Top + vis.Y), R(vis.Width), R(vis.Height),
+            _plateRect2.IsEmpty ? [Shape(_plateRect)] : [Shape(_plateRect), Shape(_plateRect2)]);
     }
 
     void UpdateLabel()
@@ -807,16 +866,17 @@ public sealed class DockWindow : Window
 
         // Like the Mac Dock: a light wash over the blur so the wallpaper's colour shows through,
         // a fine bright edge to define the shape, and a soft shadow.
-        _tint.Background = light
-            ? Theme.Vertical(glass ? 0x4DFFFFFFu : 0xF2F4F4F7u, glass ? 0x38FFFFFFu : 0xF2ECECF0u)
-            : Theme.Vertical(glass ? 0x33404046u : 0xF22A2A2Eu, glass ? 0x4D26262Au : 0xF21E1E22u);
-        _tint.BorderBrush = Theme.Brush(light ? 0x14000000u : 0x40000000u);
-        _shine.BorderBrush = light ? Theme.Vertical(0xB3FFFFFFu, 0x40FFFFFFu) : Theme.Vertical(0x33FFFFFFu, 0x14FFFFFFu);
+        _tint.Background = _tint2.Background = light
+            ? Theme.Vertical(Theme.Tinted(glass ? 0x4DFFFFFFu : 0xF2F4F4F7u), Theme.Tinted(glass ? 0x38FFFFFFu : 0xF2ECECF0u))
+            : Theme.Vertical(Theme.Tinted(glass ? 0x33404046u : 0xF22A2A2Eu), Theme.Tinted(glass ? 0x4D26262Au : 0xF21E1E22u));
+        _tint.BorderBrush = _tint2.BorderBrush = Theme.Brush(light ? 0x14000000u : 0x40000000u);
+        _shine.BorderBrush = _shine2.BorderBrush = light ? Theme.Vertical(0xB3FFFFFFu, 0x40FFFFFFu) : Theme.Vertical(0x33FFFFFFu, 0x14FFFFFFu);
         ((DropShadowEffect)_shadow.Effect).Opacity = light ? 0.14 : 0.28;
 
         _sepBrush = Theme.Brush(light ? 0x29000000u : 0x38FFFFFFu);
         foreach (var it in new[] { _sep, _sepRun }) if (it.SepLine != null) it.SepLine.Background = _sepBrush;
-        _dotBrush = Theme.Brush(light ? 0xA6000000u : 0xE6FFFFFFu);
+        // Running dots take the accent; Graphite keeps the classic neutral dot.
+        _dotBrush = Theme.AccentChoice == AccentColor.Graphite ? Theme.Brush(light ? 0xA6000000u : 0xE6FFFFFFu) : Theme.AccentBrush();
         _more.Icon = Shell.MoreIcon(_overflow.Count, light);
         if (_more.Img != null) _more.Img.Source = _more.Icon;
         foreach (var it in _items) if (it.Dot != null) it.Dot.Fill = _dotBrush;

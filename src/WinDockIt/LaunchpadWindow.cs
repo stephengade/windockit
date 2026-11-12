@@ -24,7 +24,7 @@ internal sealed class LaunchpadWindow : Window
 
     static readonly Brush White = Brushes.White;
     static readonly Brush Clear = Theme.Brush(0x01000000u);   // fully clear pixels don't receive clicks
-    static readonly Brush Accent = Theme.Brush(0xFF3D8BFDu);
+    readonly Brush Accent = Theme.AccentBrush();
 
     readonly DockWindow _dock;
     readonly GlassBackdrop _glass = new();
@@ -75,7 +75,7 @@ internal sealed class LaunchpadWindow : Window
 
         bool glass = Theme.TransparencyEnabled && _glass.IsBlurAvailable;
         // A dark wash over the blurred wallpaper keeps white labels readable on any background.
-        _root.Background = Theme.Brush(glass ? 0x66101420u : 0xF2181B26u);
+        _root.Background = Theme.Brush(Theme.Tinted(glass ? 0x66101420u : 0xF2181B26u));
         _root.Children.Add(_stage);
         _root.Children.Add(_rail);
         _root.Children.Add(_overlay);
@@ -161,7 +161,7 @@ internal sealed class LaunchpadWindow : Window
         _searchBox.Padding = new Thickness(14, 0, 14, 0);
         _searchBox.HorizontalAlignment = HorizontalAlignment.Center;
         _searchBox.Background = Theme.Brush(0x29FFFFFFu);
-        _searchBox.BorderBrush = Theme.Brush(0x38FFFFFFu);
+        _searchBox.BorderBrush = Theme.AccentBrush(0x8C);   // search always has the focus
         _searchBox.MouseLeftButtonUp += (_, e) => e.Handled = true;
     }
 

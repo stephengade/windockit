@@ -40,10 +40,10 @@ public sealed class SettingsWindow : Window
     {
         public static Palette Make(bool light) => light
             ? new(Theme.Brush(0xFFF7F7F9u), Theme.Brush(0xFFEDEDF0u), Theme.Brush(0xFFFFFFFFu), Theme.Brush(0x17000000u),
-                Theme.Brush(0xFF1C1C1Eu), Theme.Brush(0xFF6E6E73u), Theme.Brush(0xFF007AFFu), Theme.Brush(0x24007AFFu),
+                Theme.Brush(0xFF1C1C1Eu), Theme.Brush(0xFF6E6E73u), Theme.AccentBrush(), Theme.AccentBrush(0x24),
                 Theme.Brush(0x0D000000u), Theme.Brush(0x1F000000u), Theme.Brush(0x0F000000u), Theme.Brush(0x29000000u), true)
             : new(Theme.Brush(0xFF1E1E20u), Theme.Brush(0xFF252528u), Theme.Brush(0xFF2C2C2Fu), Theme.Brush(0x1FFFFFFFu),
-                Theme.Brush(0xFFF5F5F7u), Theme.Brush(0xFF98989Du), Theme.Brush(0xFF0A84FFu), Theme.Brush(0x330A84FFu),
+                Theme.Brush(0xFFF5F5F7u), Theme.Brush(0xFF98989Du), Theme.AccentBrush(), Theme.AccentBrush(0x33),
                 Theme.Brush(0x12FFFFFFu), Theme.Brush(0x29FFFFFFu), Theme.Brush(0x14FFFFFFu), Theme.Brush(0x40FFFFFFu), false);
     }
 
@@ -177,14 +177,136 @@ public sealed class SettingsWindow : Window
             Row("Space between icons", null, Slider(2, 24, 1, cfg.IconSpacing, v => $"{v:0} px", v => _dock.SetIconSpacing(v))),
             Row("Magnification", null, Segmented(["Off", "Subtle", "Medium", "Large"], mag, i => _dock.SetMagnification(mags[i]))));
 
+        Label("Dock style");
+        _page.Children.Add(StylePicker(cfg.Style));
+
+        Label("Colour");
+        var tints = Enum.GetValues<GlassTint>();
+        var accents = Enum.GetValues<AccentColor>();
         Group(
             Row("Theme", null, Segmented(["Match Windows", "Light", "Dark"], (int)cfg.Theme, i =>
             {
                 _dock.SetTheme((ThemeMode)i);
                 Restyle();
             })),
+            Row("Glass tint", "Mixed into the glass of the dock, status bar and Launchpad.",
+                Swatches(tints.Select(t => (t.ToString(), Theme.TintRgb(t))).ToArray(), Array.IndexOf(tints, cfg.Tint), i =>
+                {
+                    _dock.SetTint(tints[i]);
+                    Render();
+                })),
+            Row("Tint strength", null, Enable(cfg.Tint != GlassTint.Clear,
+                Slider(0, 100, 5, cfg.TintStrength, v => $"{v:0}%", v => _dock.SetTintStrength(v)))),
+            Row("Accent", "Running dots, Launchpad's letter index and these controls.",
+                Swatches(accents.Select(a => (a == AccentColor.Windows ? "Windows accent" : a.ToString(), (uint?)Theme.AccentRgb(a))).ToArray(),
+                    Array.IndexOf(accents, cfg.Accent), i =>
+                    {
+                        _dock.SetAccent(accents[i]);
+                        Restyle();
+                    })),
             Row("Frosted glass", "Blurs what's behind the dock and status bar. Also needs Windows' transparency effects.",
                 Toggle(cfg.Glass, _dock.SetGlass)));
+    }
+
+    static readonly (DockStyle Style, string Title, string Hint)[] Styles =
+    [
+        (DockStyle.Floating, "Floating", "Lifted off the edge"),
+        (DockStyle.FullWidth, "Full width", "Edge to edge"),
+        (DockStyle.Attached, "Attached", "Resting on the edge"),
+        (DockStyle.Pill, "Compact pill", "Small, in a capsule"),
+        (DockStyle.Split, "Split", "Pinned and open apart"),
+        (DockStyle.Minimal, "Minimal", "Glass only on hover"),
+    ];
+
+    /// <summary>The six dock styles as cards with a small picture of each, three to a row.</summary>
+    UIElement StylePicker(DockStyle current)
+    {
+        var grid = new System.Windows.Controls.Primitives.UniformGrid { Columns = 3, Margin = new Thickness(0, 0, 0, 18) };
+        foreach (var (style, title, hint) in Styles)
+        {
+            bool on = style == current;
+            var stack = new StackPanel();
+            stack.Children.Add(new Viewbox { Child = StyleThumb(style), Stretch = Stretch.Uniform });   // fits the card's width
+            stack.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 0) });
+            stack.Children.Add(new TextBlock { Text = hint, FontSize = 11.5, Foreground = P.Sub, TextTrimming = TextTrimming.CharacterEllipsis });
+            var card = new Border
+            {
+                Child = stack, Background = P.Card, CornerRadius = new CornerRadius(10), Margin = new Thickness(0, 0, 10, 10),
+                Padding = new Thickness(on ? 9 : 10), BorderThickness = new Thickness(on ? 2 : 1), BorderBrush = on ? P.Accent : P.Line,
+            };
+            AutomationProperties(card, title);
+            Clickable(card, P.Card, P.Card, () =>
+            {
+                if (on) return;
+                _dock.SetStyle(style);
+                Render();
+            });
+            card.MouseEnter += (_, _) => { if (!on) card.BorderBrush = P.Off; };
+            card.MouseLeave += (_, _) => { if (!on) card.BorderBrush = P.Line; };
+            grid.Children.Add(card);
+        }
+        return grid;
+    }
+
+    /// <summary>A little desktop with the style's glass drawn on it.</summary>
+    static UIElement StyleThumb(DockStyle style)
+    {
+        const double W = 150, H = 46;
+        var c = new Canvas { Width = W, Height = H, ClipToBounds = true, HorizontalAlignment = HorizontalAlignment.Left };
+        var bg = new Border { Width = W, Height = H, CornerRadius = new CornerRadius(6), Background = Theme.Vertical(0xFF2B3E63u, 0xFF1D2A44u) };
+        c.Children.Add(bg);
+        var glass = Theme.Brush(0x8CEBF0FAu);
+        void Piece(double x, double y, double w, double h, CornerRadius r, Brush? fill = null)
+        {
+            var b = new Border { Width = w, Height = h, CornerRadius = r, Background = fill ?? glass };
+            Canvas.SetLeft(b, x);
+            Canvas.SetTop(b, y);
+            c.Children.Add(b);
+        }
+        void Icons(double x0, double y, int n, double size, double gap)
+        {
+            for (int i = 0; i < n; i++)
+                Piece(x0 + i * (size + gap), y, size, size, new CornerRadius(size * 0.28), Theme.Brush(0xE6FFFFFFu));
+        }
+        switch (style)
+        {
+            case DockStyle.Floating: Piece(33, 27, 84, 14, new CornerRadius(4)); Icons(37, 30, 7, 8, 3.5); break;
+            case DockStyle.FullWidth: Piece(0, 32, W, 14, new CornerRadius(0, 0, 6, 6)); Icons(37, 35, 7, 8, 3.5); break;
+            case DockStyle.Attached: Piece(33, 32, 84, 14, new CornerRadius(4, 4, 0, 0)); Icons(37, 35, 7, 8, 3.5); break;
+            case DockStyle.Pill: Piece(44, 30, 62, 10, new CornerRadius(5)); Icons(50, 32, 7, 6, 2.5); break;
+            case DockStyle.Split: Piece(26, 27, 62, 14, new CornerRadius(4)); Icons(30, 30, 5, 8, 3.5); Piece(94, 27, 30, 14, new CornerRadius(4)); Icons(98, 30, 2, 8, 3.5); break;
+            default: Icons(37, 30, 7, 8, 3.5); break;
+        }
+        return c;
+    }
+
+    /// <summary>A row of colour dots, one selected. A null colour is drawn as "none" (half light, half dark).</summary>
+    UIElement Swatches((string Name, uint? Rgb)[] colours, int selected, Action<int> pick)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        for (int i = 0; i < colours.Length; i++)
+        {
+            int index = i;
+            var (name, rgb) = colours[i];
+            Brush fill = rgb is uint v ? Theme.Brush(0xFF000000u | v) : new LinearGradientBrush(
+                new GradientStopCollection { new(Colors.White, 0), new(Colors.White, 0.5), new(Color.FromRgb(0x2A, 0x2E, 0x38), 0.5), new(Color.FromRgb(0x2A, 0x2E, 0x38), 1) },
+                new Point(0, 0), new Point(1, 1));
+            var dot = new Ellipse { Width = 18, Height = 18, Fill = fill, Stroke = P.Line, StrokeThickness = 1 };
+            var ring = new Border
+            {
+                Width = 26, Height = 26, CornerRadius = new CornerRadius(13), BorderThickness = new Thickness(2),
+                BorderBrush = i == selected ? P.Text : Brushes.Transparent, Child = dot, Margin = new Thickness(1, 0, 1, 0),
+                Background = Brushes.Transparent, Cursor = Cursors.Hand, ToolTip = name,
+            };
+            AutomationProperties(ring, name);
+            ring.MouseLeftButtonUp += (_, e) =>
+            {
+                e.Handled = true;
+                if (index != selected) Try(() => pick(index));
+            };
+            row.Children.Add(ring);
+        }
+        return row;
     }
 
     void RenderBehaviour(DockConfig cfg)

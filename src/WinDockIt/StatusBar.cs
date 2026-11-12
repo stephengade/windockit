@@ -304,7 +304,7 @@ public sealed class StatusBar : Window
     {
         bool light = Theme.IsLight, glass = Theme.TransparencyEnabled && _glass.IsBlurAvailable;
         // Same see-through wash as the dock, so the wallpaper shows through at the top and bottom.
-        _tint.Background = light ? Theme.Brush(glass ? 0x59FFFFFFu : 0xF2F4F4F7u) : Theme.Brush(glass ? 0x47202024u : 0xF21E1E22u);
+        _tint.Background = Theme.Brush(Theme.Tinted(light ? (glass ? 0x59FFFFFFu : 0xF2F4F4F7u) : (glass ? 0x47202024u : 0xF21E1E22u)));
         _tint.BorderBrush = Theme.Brush(light ? 0x1A000000u : 0x1FFFFFFFu);
         _fg = Theme.Brush(light ? 0xFF1C1C1Eu : 0xFFF5F5F7u);
         _contrast = Theme.Brush(light ? 0xFFFFFFFFu : 0xFF1C1C1Eu);

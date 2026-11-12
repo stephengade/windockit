@@ -9,6 +9,29 @@ public enum ThemeMode { System, Light, Dark }
 
 public enum HideMode { KeepSpace, Smart, Always }
 
+/// <summary>The dock's shape.</summary>
+public enum DockStyle
+{
+    /// <summary>Rounded glass lifted off the screen edge.</summary>
+    Floating,
+    /// <summary>Glass along the whole edge, like a taskbar.</summary>
+    FullWidth,
+    /// <summary>Centred glass resting on the edge, rounded only on the inside.</summary>
+    Attached,
+    /// <summary>Smaller icons in a fully rounded capsule.</summary>
+    Pill,
+    /// <summary>Pinned apps in one piece of glass; open apps and the Recycle Bin in another.</summary>
+    Split,
+    /// <summary>No glass until the pointer is over the dock.</summary>
+    Minimal,
+}
+
+/// <summary>A colour mixed into the frosted glass of the dock, status bar and Launchpad.</summary>
+public enum GlassTint { Clear, Graphite, Ocean, Plum, Rose, Forest, Sunset }
+
+/// <summary>The highlight colour for running dots, Launchpad's index and Settings' controls.</summary>
+public enum AccentColor { Windows, Blue, Purple, Pink, Red, Orange, Green, Graphite }
+
 public sealed class DockConfig
 {
     public DockPosition Position { get; set; } = DockPosition.Bottom;
@@ -25,6 +48,11 @@ public sealed class DockConfig
     /// <summary>The frosted blur behind the dock and status bar (also needs Windows' transparency effects).</summary>
     public bool Glass { get; set; } = true;
     public ThemeMode Theme { get; set; } = ThemeMode.System;
+    public DockStyle Style { get; set; } = DockStyle.Floating;
+    public GlassTint Tint { get; set; } = GlassTint.Clear;
+    /// <summary>How much of <see cref="Tint"/> goes into the glass, 0–100.</summary>
+    public double TintStrength { get; set; } = 35;
+    public AccentColor Accent { get; set; } = AccentColor.Windows;
     public bool ShowStart { get; set; } = true;
     public bool HideTaskbar { get; set; }
     /// <summary>The Mac-style bar along the top with Wi-Fi, Bluetooth, volume, battery and the clock.</summary>
@@ -69,6 +97,7 @@ public sealed class DockConfig
                     c.IconSize = Math.Clamp(c.IconSize, 24, 128);
                     c.Magnification = Math.Clamp(c.Magnification, 1, 3);
                     c.IconSpacing = Math.Clamp(c.IconSpacing, 2, 32);
+                    c.TintStrength = Math.Clamp(c.TintStrength, 0, 100);
                     c.Items ??= new();
                     c.LaunchCounts = new(c.LaunchCounts ?? new(), StringComparer.OrdinalIgnoreCase);
                     c.Items.RemoveAll(i => string.IsNullOrWhiteSpace(i.Location));
