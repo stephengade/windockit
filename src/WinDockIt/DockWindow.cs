@@ -53,6 +53,7 @@ public sealed class DockWindow : Window
     readonly TextBlock _labelText = new() { FontSize = 12.5 };
     readonly GlassBackdrop _plate = new();
     AppBar? _appBar;
+    StatusBar? _status;
     readonly DispatcherTimer _fastTimer, _slowTimer;
     Brush _dotBrush = Brushes.Black, _sepBrush = Brushes.Gray;
     static readonly Brush AttentionBrush = Theme.Brush(0xFFFF9F0Au);
@@ -183,6 +184,24 @@ public sealed class DockWindow : Window
         new WindowInteropHelper(this).Owner = _plate.Handle;
         Show();
         Kick();
+        if (_cfg.ShowStatusBar) SetStatusBar(true);
+    }
+
+    /// <summary>Shows or removes the bar along the top of the screen.</summary>
+    void SetStatusBar(bool on)
+    {
+        if (_cfg.ShowStatusBar != on) { _cfg.ShowStatusBar = on; _cfg.Save(); }
+        if (on && _status == null)
+        {
+            _status = new StatusBar(h => _items.FirstOrDefault(i => i.IsApp && i.Windows.Contains(h)), () => SetStatusBar(false));
+            _status.Start();
+        }
+        else if (!on && _status != null)
+        {
+            _status.Shutdown();
+            _status = null;
+        }
+        ApplyLayout();
     }
 
     // ───────────────────────── items ─────────────────────────
@@ -612,12 +631,14 @@ public sealed class DockWindow : Window
         bool light = Theme.IsLight, glass = Theme.TransparencyEnabled && _plate.IsBlurAvailable;
         Theme.ApplyMenus(light);
 
+        // Like the Mac Dock: a light wash over the blur so the wallpaper's colour shows through,
+        // a fine bright edge to define the shape, and a soft shadow.
         _tint.Background = light
-            ? Theme.Vertical(glass ? 0x80FFFFFFu : 0xF2F4F4F7u, glass ? 0x66FFFFFFu : 0xF2ECECF0u)
-            : Theme.Vertical(glass ? 0x8A2C2C30u : 0xF22A2A2Eu, glass ? 0x991C1C20u : 0xF21E1E22u);
-        _tint.BorderBrush = Theme.Brush(light ? 0x1F000000u : 0x80000000u);
-        _shine.BorderBrush = light ? Theme.Vertical(0xCCFFFFFFu, 0x33FFFFFFu) : Theme.Vertical(0x38FFFFFFu, 0x0DFFFFFFu);
-        ((DropShadowEffect)_shadow.Effect).Opacity = light ? 0.22 : 0.45;
+            ? Theme.Vertical(glass ? 0x4DFFFFFFu : 0xF2F4F4F7u, glass ? 0x38FFFFFFu : 0xF2ECECF0u)
+            : Theme.Vertical(glass ? 0x33404046u : 0xF22A2A2Eu, glass ? 0x4D26262Au : 0xF21E1E22u);
+        _tint.BorderBrush = Theme.Brush(light ? 0x14000000u : 0x40000000u);
+        _shine.BorderBrush = light ? Theme.Vertical(0xB3FFFFFFu, 0x40FFFFFFu) : Theme.Vertical(0x33FFFFFFu, 0x14FFFFFFu);
+        ((DropShadowEffect)_shadow.Effect).Opacity = light ? 0.14 : 0.28;
 
         _sepBrush = Theme.Brush(light ? 0x29000000u : 0x38FFFFFFu);
         foreach (var it in new[] { _sep, _sepRun }) if (it.SepLine != null) it.SepLine.Background = _sepBrush;
@@ -627,6 +648,7 @@ public sealed class DockWindow : Window
         _label.Background = Theme.Brush(light ? 0xEBFFFFFFu : 0xEB2C2C30u);
         _label.BorderBrush = Theme.Brush(light ? 0x1A000000u : 0x29FFFFFFu);
         _labelText.Foreground = Theme.Brush(light ? 0xFF1C1C1Eu : 0xFFF5F5F7u);
+        _status?.ApplyTheme();
         Kick();
     }
 
@@ -890,6 +912,7 @@ public sealed class DockWindow : Window
         menu.Items.Add(Sub("Magnification",
             MagItem("Off", 1), MagItem("Subtle", 1.35), MagItem("Medium", 1.75), MagItem("Large", 2.1)));
         menu.Items.Add(Item("Hide Windows taskbar", () => SetHideTaskbar(!_cfg.HideTaskbar), _cfg.HideTaskbar));
+        menu.Items.Add(Item("Show status bar", () => SetStatusBar(!_cfg.ShowStatusBar), _cfg.ShowStatusBar));
         menu.Items.Add(Item("Show Start button", () => { _cfg.ShowStart = !_cfg.ShowStart; _cfg.Save(); Rebuild(Pins, Transients); }, _cfg.ShowStart));
         menu.Items.Add(Item("Automatically hide", () => { _cfg.AutoHide = !_cfg.AutoHide; _cfg.Save(); ApplyLayout(); }, _cfg.AutoHide));
         menu.Items.Add(Item("Start with Windows", () => SetStartup(!IsStartup), IsStartup));
@@ -986,6 +1009,7 @@ public sealed class DockWindow : Window
             _fullscreen = fs;
             if (fs) { Hide(); _plate.Hide(); }
             else { _plate.Show(); Show(); Kick(); }
+            _status?.SetFullscreen(fs);
         }
         if (fs) return;
 
@@ -1122,6 +1146,7 @@ public sealed class DockWindow : Window
         {
             // Explorer restarted: it forgot our reserved space and brought its taskbar back.
             _appBar?.Reset();
+            _status?.Reset();
             if (_cfg.HideTaskbar) TaskbarHider.Hide(_cfg);
             Dispatcher.InvokeAsync(ApplyLayout);
             return IntPtr.Zero;

@@ -16,7 +16,8 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 - **Every open app.** Running apps that aren't pinned appear after a divider, and leave when you close them. Right-click › **Keep in Dock** pins one. Windows are grouped by app the same way the taskbar groups them, so web apps and Store apps get their own icons.
 - **Asks for attention.** When an app flashes for attention, its icon bounces and its dot turns orange until you look.
 - **Start button.** Opens the Start menu. Can be hidden from the dock's menu.
-- **Replace the taskbar.** Optional: **Hide Windows taskbar** in the dock's menu. The taskbar comes back when WinDockIt quits, and a small watchdog brings it back even if WinDockIt crashes. While it's hidden, the system tray and clock are still available: Win+N opens notifications and the calendar, and Win+A opens quick settings.
+- **Status bar.** A thin frosted bar along the top of the screen, like the Mac menu bar. On the left: Start and the name of the app you're in. Click the name to see that app's windows, or to hide or quit it. On the right: Wi-Fi, Bluetooth, volume, battery, quick settings, and the date and time. Each opens the matching Windows panel, and you can scroll over the volume icon to change it. Like the dock, the bar reserves its own strip of the screen. Turn it off with **Show status bar** in the dock's menu.
+- **Replace the taskbar.** Optional: **Hide Windows taskbar** in the dock's menu. The taskbar comes back when WinDockIt quits, and a small watchdog brings it back even if WinDockIt crashes. While it's hidden, the status bar shows the clock and system status.
 - **Click to switch.** Clicking a running app brings it forward. Click again to minimize it. If the app has several windows, clicking cycles through them.
 - **Launch bounce.** Icons hop when an app starts.
 - **Pin anything.** Drag apps, shortcuts, files or folders onto the dock, or use **Add app…**.
@@ -35,6 +36,7 @@ WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each a
 | App options, its open windows, Keep in Dock, Close | Right-click an icon |
 | Dock settings (position, size, magnification, auto-hide) | Right-click an empty part of the dock |
 | Pin something | Drag it onto the dock |
+| Change the volume | Scroll over the volume icon in the status bar |
 | Bring over your taskbar apps | Right-click an empty part of the dock › Import from taskbar |
 | Reorder | Drag an icon along the dock |
 | Unpin | Drag an icon off the dock, or right-click › Remove from Dock |
@@ -86,6 +88,8 @@ All layout happens by hand each frame, in "dock space": distance *along* the doc
 | `GlassBackdrop.cs` | Frosted glass via Windows.UI.Composition |
 | `AppBar.cs` | Reserves the dock's screen space, like the taskbar does |
 | `TaskbarPins.cs` | Reads the taskbar's pinned apps for import |
+| `StatusBar.cs` | The bar along the top: app name, status icons, clock |
+| `SystemStatus.cs` | Reads network, Bluetooth, volume and battery state |
 | `TaskbarHider.cs` | Hides and restores the Windows taskbar, plus the crash watchdog |
 | `Shell.cs` | High-res shell icons, shortcut targets, Recycle Bin |
 | `WindowList.cs` | Finds open app windows and works out which app each belongs to |

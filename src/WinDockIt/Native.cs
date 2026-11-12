@@ -68,6 +68,20 @@ internal static class Native
         keybd_event(0x5B, 0, 2, UIntPtr.Zero);
     }
 
+    /// <summary>Win+A: quick settings (Wi-Fi, Bluetooth, volume, brightness).</summary>
+    public static void OpenQuickSettings() => WinKey(0x41);
+
+    /// <summary>Win+N: notifications and the calendar.</summary>
+    public static void OpenNotifications() => WinKey(0x4E);
+
+    static void WinKey(byte vk)
+    {
+        keybd_event(0x5B, 0, 0, UIntPtr.Zero);
+        keybd_event(vk, 0, 0, UIntPtr.Zero);
+        keybd_event(vk, 0, 2, UIntPtr.Zero);
+        keybd_event(0x5B, 0, 2, UIntPtr.Zero);
+    }
+
     public static string ClassName(IntPtr h)
     {
         var sb = new StringBuilder(256);

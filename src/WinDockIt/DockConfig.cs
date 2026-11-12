@@ -13,6 +13,8 @@ public sealed class DockConfig
     public bool AutoHide { get; set; }
     public bool ShowStart { get; set; } = true;
     public bool HideTaskbar { get; set; }
+    /// <summary>The Mac-style bar along the top with Wi-Fi, Bluetooth, volume, battery and the clock.</summary>
+    public bool ShowStatusBar { get; set; } = true;
     /// <summary>The taskbar's own auto-hide setting before WinDockIt hid it; set only while it's hidden.</summary>
     public bool? TaskbarWasAutoHide { get; set; }
     public List<DockItem> Items { get; set; } = new();
