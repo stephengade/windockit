@@ -61,6 +61,8 @@ public sealed class DockConfig
     public HideMode StatusBarHide { get; set; } = HideMode.KeepSpace;
     /// <summary>The taskbar's own auto-hide setting before WinDockIt hid it; set only while it's hidden.</summary>
     public bool? TaskbarWasAutoHide { get; set; }
+    /// <summary>Set once "Start with Windows" has been switched on by default, so turning it off later sticks.</summary>
+    public bool StartupDefaulted { get; set; }
     public List<DockItem> Items { get; set; } = new();
     /// <summary>How often each app was opened from the dock or Launchpad, for Launchpad's "Frequently used".</summary>
     public Dictionary<string, int> LaunchCounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);

@@ -207,6 +207,7 @@ public sealed class DockWindow : Window
         };
         // Also undoes a hide left over from a crash, if the option has since been turned off.
         if (_cfg.HideTaskbar) TaskbarHider.Hide(_cfg); else TaskbarHider.Restore(_cfg);
+        EnsureStartup();
         _plate.Show();
         new WindowInteropHelper(this).Owner = _plate.Handle;
         Show();
@@ -1251,10 +1252,30 @@ public sealed class DockWindow : Window
 
     internal static void SetStartup(bool on)
     {
-        using var k = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
-        if (k == null) return;
-        if (on) k.SetValue(AppName, $"\"{Environment.ProcessPath}\"");
-        else k.DeleteValue(AppName, throwOnMissingValue: false);
+        try
+        {
+            using var k = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+            if (k == null) return;
+            if (on) k.SetValue(AppName, $"\"{Environment.ProcessPath}\"");
+            else k.DeleteValue(AppName, throwOnMissingValue: false);
+        }
+        catch (Exception ex) { App.Log(ex); }
+    }
+
+    /// <summary>
+    /// A dock that replaces the taskbar has to come back after a restart, so "Start with Windows" is on
+    /// unless the user turned it off. It's switched on once; after that their choice stands. If it's on,
+    /// the entry is pointed at this copy of the app, so moving or rebuilding WinDockIt doesn't break it.
+    /// </summary>
+    void EnsureStartup()
+    {
+        if (!_cfg.StartupDefaulted)
+        {
+            SetStartup(true);
+            _cfg.StartupDefaulted = true;
+            _cfg.Save();
+        }
+        else if (IsStartup) SetStartup(true);
     }
 
     // ───────────────────────── timers ─────────────────────────
