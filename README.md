@@ -4,6 +4,8 @@ A clean, modern dock for Windows: frosted glass, smooth magnification, and it si
 
 WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each app's real Windows icon, and stays out of your way.
 
+WinDockIt is free. If you find it useful, you can [support the developer ♥](https://flossafrica.com/m/stephengade).
+
 ## Features
 
 - **Frosted glass.** Real blur of whatever is behind the dock, with smooth rounded corners. It follows your Windows light/dark theme and the *Transparency effects* setting.
@@ -117,6 +119,10 @@ Issues and pull requests are welcome. Some things that would be great to have:
 - Folder "stacks" that fan out
 - Windows taskbar-style jump lists on right-click
 - An installer
+
+## Support
+
+WinDockIt is built and maintained in spare time. If it's made your desktop nicer, you can [support the developer](https://flossafrica.com/m/stephengade). It's also linked from Settings → About and the dock's right-click menu.
 
 ## License
 

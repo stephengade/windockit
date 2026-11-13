@@ -60,6 +60,15 @@ public partial class App : Application
 
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(int pid);
 
+    /// <summary>Where people can support WinDockIt's developer.</summary>
+    internal const string SupportUrl = "https://flossafrica.com/m/stephengade";
+
+    internal static void OpenSupport()
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(SupportUrl) { UseShellExecute = true })?.Dispose(); }
+        catch (Exception ex) { Log(ex); }
+    }
+
     const string ShowSettingsEvent = "WinDockIt.ShowSettings", ShowLaunchpadEvent = "WinDockIt.ShowLaunchpad";
     static readonly List<EventWaitHandle> s_signals = new();
 

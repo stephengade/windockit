@@ -38,6 +38,8 @@ public sealed class DockItem
     internal System.Windows.Controls.Border? SepLine;
     internal ImageSource? Icon;
     internal Image? Img;
+    /// <summary>Holds <see cref="Img"/>: carries its position, size transform and the cached bitmap of icon plus shadow.</summary>
+    internal System.Windows.Controls.Grid? Holder;
     internal Ellipse? Dot;
     internal bool IsRunning;
 

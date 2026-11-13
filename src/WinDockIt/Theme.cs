@@ -126,5 +126,7 @@ internal static class Theme
         r["Menu.Fg"] = Brush(light ? 0xFF1C1C1Eu : 0xFFF2F2F5u);
         r["Menu.Hover"] = Brush(light ? 0x14000000u : 0x1FFFFFFFu);
         r["Menu.Sep"] = Brush(light ? 0x1A000000u : 0x26FFFFFFu);
+        r["Scroll.Thumb"] = Brush(light ? 0x59000000u : 0x59FFFFFFu);
+        r["Scroll.ThumbHover"] = Brush(light ? 0x8C000000u : 0x8CFFFFFFu);
     }
 }

@@ -43,6 +43,7 @@ internal sealed class GlassBackdrop : IDisposable
     readonly SpriteVisual?[] _sprites = new SpriteVisual?[2];
     readonly CompositionRoundedRectangleGeometry?[] _shapes = new CompositionRoundedRectangleGeometry?[2];
     string _last = "";
+    (int, int, int, int) _bounds = (int.MinValue, 0, 0, 0);
     float _opacity = 1;
 
     public IntPtr Handle => _window.Handle;
@@ -106,11 +107,18 @@ internal sealed class GlassBackdrop : IDisposable
     /// <summary>Like <see cref="SetShape"/>, with one or two rounded shapes, each relative to the window.</summary>
     public void SetShapes(int x, int y, int w, int h, (int X, int Y, int W, int H, int Radius)[] shapes)
     {
-        var key = $"{x},{y},{w},{h}|" + string.Join("|", shapes);
-        if (key == _last) return;
+        var key = string.Join("|", shapes);
+        var bounds = (x, y, w, h);
+        if (key == _last && bounds == _bounds) return;
         _last = key;
 
-        SetWindowPos(Handle, IntPtr.Zero, x, y, Math.Max(w, 0), Math.Max(h, 0), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        // Moving or resizing the window waits on the desktop compositor (about 10 ms), so it's done only
+        // when the bounds really change. Animating the shapes inside it is cheap.
+        if (bounds != _bounds)
+        {
+            _bounds = bounds;
+            SetWindowPos(Handle, IntPtr.Zero, x, y, Math.Max(w, 0), Math.Max(h, 0), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        }
         for (int i = 0; i < _sprites.Length; i++)
         {
             var sprite = _sprites[i];

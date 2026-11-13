@@ -397,6 +397,8 @@ public sealed class SettingsWindow : Window
             Row("Version", null, new TextBlock { Text = version, Foreground = P.Sub }),
             Row("Settings file", DockConfig.FilePath, Button(null, "Open folder", () => Open(DockConfig.Folder))),
             Row("Licence", null, new TextBlock { Text = "MIT", Foreground = P.Sub }));
+        Group(Row("Support the developer", "WinDockIt is free and open source. If it's useful to you, a tip keeps it going.",
+            Button(null, "Support ♥", App.OpenSupport)));
         Group(Row("Quit WinDockIt", "Removes the dock and status bar, and brings the taskbar back if it was hidden.",
             Button(null, "Quit", () => Application.Current.Shutdown())));
     }

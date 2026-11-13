@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -7,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 
 namespace WinDockIt;
 
@@ -50,6 +52,9 @@ internal sealed class LaunchpadWindow : Window
     bool _closing, _busy;       // _busy: a menu or drag is in progress, so losing focus mustn't close us
     Point? _pressAt;
     bool _railDown;
+    readonly Border _close = new();
+    bool _following;
+    DispatcherTimer? _renderSoon;
 
     // Sizes, worked out from the screen in Open().
     double _icon = 72, _cellW = 150, _cellH = 124;
@@ -64,7 +69,8 @@ internal sealed class LaunchpadWindow : Window
         _dock = dock;
         Title = "Launchpad";
         WindowStyle = WindowStyle.None;
-        AllowsTransparency = true;
+        // Not a layered (AllowsTransparency) window: those are drawn on the CPU and copied every frame,
+        // which made a full-screen Launchpad slow to open and to animate. Transparency comes from DWM instead.
         Background = Brushes.Transparent;
         Topmost = true;
         ShowInTaskbar = false;
@@ -78,10 +84,12 @@ internal sealed class LaunchpadWindow : Window
         _root.Background = Theme.Brush(Theme.Tinted(glass ? 0x66101420u : 0xF2181B26u));
         _root.Children.Add(_stage);
         _root.Children.Add(_rail);
+        _root.Children.Add(_close);
         _root.Children.Add(_overlay);
         Content = _root;
 
         BuildSearch();
+        BuildClose();
         _scroll.Content = _content;
         _scroll.Background = Clear;   // so the wheel works over the gaps between apps
         PreviewMouseWheel += OnWheel;
@@ -119,12 +127,14 @@ internal sealed class LaunchpadWindow : Window
         _root.MouseLeftButtonUp += (_, e) => { if (!e.Handled && _pressAt == null) CloseSheet(); };
         PreviewKeyDown += OnKey;
         Deactivated += (_, _) => { if (!_busy) CloseSheet(); };
-        SourceInitialized += (_, _) => Native.AddExStyle(new WindowInteropHelper(this).Handle, Native.WS_EX_TOOLWINDOW);
+        SourceInitialized += (_, _) => PrepareWindow();
         AppCatalog.Changed += OnCatalogChanged;
         Closed += (_, _) =>
         {
             AppCatalog.Changed -= OnCatalogChanged;
             if (_scrolling) CompositionTarget.Rendering -= StepScroll;
+            if (_following) CompositionTarget.Rendering -= SyncGlass;
+            _renderSoon?.Stop();
             _glass.Dispose();
         };
     }
@@ -174,10 +184,37 @@ internal sealed class LaunchpadWindow : Window
             foreach (var a in AppCatalog.Apps)
                 if (a.Icon != null && _catalogImages.TryGetValue(a.Location, out var img) && img.Source != a.Icon) img.Source = a.Icon;
         }
-        else Render();
+        else RenderSoon();
     });
 
     // ───────────────────────── showing ─────────────────────────
+
+    [StructLayout(LayoutKind.Sequential)] struct Margins { public int L, R, T, B; }
+    [DllImport("dwmapi.dll")] static extern int DwmExtendFrameIntoClientArea(IntPtr h, ref Margins m);
+    [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int value, int size);
+
+    /// <summary>
+    /// A normal, GPU-drawn window whose clear areas DWM shows through (to the blur window behind it),
+    /// with no Windows 11 rounded corners or border. Cloaked until its first frame is ready.
+    /// </summary>
+    void PrepareWindow()
+    {
+        var h = new WindowInteropHelper(this).Handle;
+        Native.AddExStyle(h, Native.WS_EX_TOOLWINDOW);
+        if (HwndSource.FromHwnd(h)?.CompositionTarget is { } target) target.BackgroundColor = Colors.Transparent;
+        var m = new Margins { L = -1, R = -1, T = -1, B = -1 };
+        DwmExtendFrameIntoClientArea(h, ref m);
+        int noRound = 1 /* DWMWCP_DONOTROUND */, noBorder = unchecked((int)0xFFFFFFFE) /* DWMWA_COLOR_NONE */;
+        DwmSetWindowAttribute(h, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, ref noRound, sizeof(int));
+        DwmSetWindowAttribute(h, 34 /* DWMWA_BORDER_COLOR */, ref noBorder, sizeof(int));
+        SetCloak(true);
+    }
+
+    void SetCloak(bool on)
+    {
+        int v = on ? 1 : 0;
+        DwmSetWindowAttribute(new WindowInteropHelper(this).Handle, 13 /* DWMWA_CLOAK */, ref v, sizeof(int));
+    }
 
     public void Open()
     {
@@ -210,21 +247,31 @@ internal sealed class LaunchpadWindow : Window
         _rail.Margin = new Thickness(0, padT + 80, padR + 22, padB + 30);
 
         Render();
+        _close.Margin = new Thickness(0, padT + 34, padR + 22, 0);
 
+        // Start fully transparent, blur included, so nothing pops in before the fade begins.
+        _root.Opacity = 0;
+        _glass.SetOpacity(0);
         int px = mon.Left, py = mon.Top, pw = mon.Right - mon.Left, ph = mon.Bottom - mon.Top;
         _glass.SetShape(px, py, pw, ph, 0, 0, pw, ph, 0);
         _glass.Show();
         new WindowInteropHelper(this).Owner = _glass.Handle;
+
+        // The window stays cloaked (invisible) until its first frame is drawn, then fades in while the
+        // apps settle from slightly larger, like the Mac. Starting the fade earlier wasted it on frames
+        // nobody saw, so Launchpad seemed to pop in.
+        ContentRendered += (_, _) =>
+        {
+            SetCloak(false);
+            FollowFade();
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            _root.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
+            var st = (ScaleTransform)_stage.RenderTransform;
+            var zoom = new DoubleAnimation(1.04, 1, TimeSpan.FromMilliseconds(240)) { EasingFunction = ease };
+            st.BeginAnimation(ScaleTransform.ScaleXProperty, zoom);
+            st.BeginAnimation(ScaleTransform.ScaleYProperty, zoom);
+        };
         Show();
-
-        // Fade in while the apps settle from slightly larger, like the Mac.
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        _root.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
-        var st = (ScaleTransform)_stage.RenderTransform;
-        var zoom = new DoubleAnimation(1.04, 1, TimeSpan.FromMilliseconds(240)) { EasingFunction = ease };
-        st.BeginAnimation(ScaleTransform.ScaleXProperty, zoom);
-        st.BeginAnimation(ScaleTransform.ScaleYProperty, zoom);
-
         var hwnd = new WindowInteropHelper(this).Handle;
         Activate();
         if (Native.GetForegroundWindow() != hwnd) Native.Focus(hwnd);
@@ -239,9 +286,66 @@ internal sealed class LaunchpadWindow : Window
         if (_closing) return;
         _closing = true;
         if (quick) { _glass.Hide(); Close(); return; }
-        var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(120));
+        FollowFade();
+        var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(140));
         fade.Completed += (_, _) => { _glass.Hide(); Close(); };
         _root.BeginAnimation(OpacityProperty, fade);
+    }
+
+    /// <summary>
+    /// The blur lives in its own window, so it doesn't fade with the content by itself. Matching it to the
+    /// content's opacity every frame stops the blur from appearing or vanishing all at once.
+    /// </summary>
+    void FollowFade()
+    {
+        if (_following) return;
+        _following = true;
+        CompositionTarget.Rendering += SyncGlass;
+    }
+
+    void SyncGlass(object? sender, EventArgs e)
+    {
+        _glass.SetOpacity(_root.Opacity);
+        bool settled = _closing ? _root.Opacity <= 0.001 : _root.Opacity >= 0.999;
+        if (!settled) return;
+        _following = false;
+        CompositionTarget.Rendering -= SyncGlass;
+    }
+
+    /// <summary>The catalog reports in batches as icons load; rebuilding the grid for each one made it flicker.</summary>
+    void RenderSoon()
+    {
+        if (_renderSoon == null)
+        {
+            _renderSoon = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = TimeSpan.FromMilliseconds(250) };
+            _renderSoon.Tick += (_, _) => { _renderSoon.Stop(); if (!_closing) Render(); };
+        }
+        _renderSoon.Stop();
+        _renderSoon.Start();
+    }
+
+    /// <summary>A plain close button in the top corner, for anyone who doesn't know clicking the background closes Launchpad.</summary>
+    void BuildClose()
+    {
+        _close.Width = _close.Height = 38;
+        _close.CornerRadius = new CornerRadius(19);
+        _close.BorderThickness = new Thickness(1);
+        _close.HorizontalAlignment = HorizontalAlignment.Right;
+        _close.VerticalAlignment = VerticalAlignment.Top;
+        _close.Cursor = Cursors.Hand;
+        _close.ToolTip = "Close (Esc)";
+        Brush rest = Theme.Brush(0x29FFFFFFu), hover = Theme.Brush(0x47FFFFFFu), down = Theme.Brush(0x1AFFFFFFu);
+        _close.Background = rest;
+        _close.BorderBrush = Theme.Brush(0x33FFFFFFu);
+        _close.Child = new TextBlock
+        {
+            Text = "", FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 13,
+            Foreground = White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+        };
+        _close.MouseEnter += (_, _) => _close.Background = hover;
+        _close.MouseLeave += (_, _) => _close.Background = rest;
+        _close.MouseLeftButtonDown += (_, e) => { _close.Background = down; e.Handled = true; };
+        _close.MouseLeftButtonUp += (_, e) => { e.Handled = true; CloseSheet(); };
     }
 
     // ───────────────────────── content ─────────────────────────
@@ -265,7 +369,9 @@ internal sealed class LaunchpadWindow : Window
         _tiles.Clear();
         _groups.Clear();
         _catalogImages.Clear();
+        _railLetterList.Clear();
         _selected = -1;
+        _renderGen++;
         string q = _search.Text.Trim();
 
         if (q.Length > 0)
@@ -314,14 +420,32 @@ internal sealed class LaunchpadWindow : Window
         var apps = AppCatalog.Apps;
         _renderedCatalog = apps.Count;
         if (apps.Count == 0) Label("Loading apps…", top: 18);
-        foreach (var group in apps.GroupBy(a => LetterOf(a.Name)).OrderBy(g => g.Key == '#' ? 0 : 1).ThenBy(g => g.Key))
+        var groups = apps.GroupBy(a => LetterOf(a.Name)).OrderBy(g => g.Key == '#' ? 0 : 1).ThenBy(g => g.Key)
+            .Select(g => (g.Key, Apps: g.ToList())).ToList();
+        _railLetterList = groups.Select(g => g.Key).ToList();
+
+        // Laying out hundreds of tiles before the first frame kept Launchpad blank for half a second.
+        // So only enough to fill the screen (plus whatever the old scroll position needs) is built now;
+        // the rest follows straight after, once the window is showing.
+        int gen = _renderGen;
+        double budget = (ActualHeight > 0 ? ActualHeight : SystemParameters.PrimaryScreenHeight) + offset + _cellH * 2, used = 0;
+        int built = 0;
+        foreach (var (letter, list) in groups)
         {
-            var header = Header(group.Key);
-            _groups.Add((group.Key, header));
-            _content.Children.Add(header);
-            _content.Children.Add(TileGrid(group.Select(a => new Entry(a.Name, a.Location, a.Icon, _dock.ItemFor(a.Location))).ToList(), catalog: true));
+            if (used > budget) break;
+            AddGroup(letter, list);
+            used += 60 + Math.Ceiling(list.Count / (double)_cols) * _cellH;
+            built++;
         }
-        _content.Children.Add(new Border { Height = 24 });
+        var rest = groups.Skip(built).ToList();
+        if (rest.Count == 0) _content.Children.Add(new Border { Height = 24 });
+        else Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        {
+            if (gen != _renderGen || _closing) return;
+            foreach (var (letter, list) in rest) AddGroup(letter, list);
+            _content.Children.Add(new Border { Height = 24 });
+            UpdateActiveLetter();
+        });
 
         BuildRail();
         _scroll.UpdateLayout();
@@ -329,6 +453,17 @@ internal sealed class LaunchpadWindow : Window
         _scrollTarget = offset;
         UpdateActiveLetter();
     }
+
+    void AddGroup(char letter, List<CatalogApp> list)
+    {
+        var header = Header(letter);
+        _groups.Add((letter, header));
+        _content.Children.Add(header);
+        _content.Children.Add(TileGrid(list.Select(a => new Entry(a.Name, a.Location, a.Icon, _dock.ItemFor(a.Location))).ToList(), catalog: true));
+    }
+
+    int _renderGen;
+    List<char> _railLetterList = new();
 
     static char LetterOf(string name)
     {
@@ -485,8 +620,8 @@ internal sealed class LaunchpadWindow : Window
     void BuildRail()
     {
         _railLetters.Children.Clear();
-        _rail.Visibility = _groups.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var (letter, _) in _groups)
+        _rail.Visibility = _railLetterList.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var letter in _railLetterList)
         {
             _railLetters.Children.Add(new Border
             {

@@ -97,5 +97,77 @@
       </Setter>
     </Style>
 
+    <!-- Slim, modern scroll bars: a thin rounded thumb, no arrows or track, a little wider on hover. -->
+    <SolidColorBrush x:Key="Scroll.Thumb" Color="#59000000"/>
+    <SolidColorBrush x:Key="Scroll.ThumbHover" Color="#8C000000"/>
+
+    <Style x:Key="Scroll.ThumbStyle" TargetType="Thumb">
+      <Setter Property="OverridesDefaultStyle" Value="True"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Thumb">
+            <Border x:Name="T" CornerRadius="3" Background="{DynamicResource Scroll.Thumb}"/>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsDragging" Value="True">
+                <Setter TargetName="T" Property="Background" Value="{DynamicResource Scroll.ThumbHover}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="Scroll.PageStyle" TargetType="RepeatButton">
+      <Setter Property="OverridesDefaultStyle" Value="True"/>
+      <Setter Property="Focusable" Value="False"/>
+      <Setter Property="IsTabStop" Value="False"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RepeatButton">
+            <Border Background="Transparent"/>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style TargetType="ScrollBar">
+      <Setter Property="OverridesDefaultStyle" Value="True"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Width" Value="12"/>
+      <Setter Property="MinWidth" Value="12"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ScrollBar">
+            <Grid Background="Transparent">
+              <Track x:Name="PART_Track" IsDirectionReversed="True" Margin="0,4">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Style="{StaticResource Scroll.PageStyle}" Command="ScrollBar.PageUpCommand"/>
+                </Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Style="{StaticResource Scroll.PageStyle}" Command="ScrollBar.PageDownCommand"/>
+                </Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb x:Name="Thumb" Style="{StaticResource Scroll.ThumbStyle}" Width="4" MinHeight="32"
+                         HorizontalAlignment="Center"/>
+                </Track.Thumb>
+              </Track>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Thumb" Property="Width" Value="7"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <!-- Horizontal bars aren't used anywhere; keep them out of the way if one ever appears. -->
+        <Trigger Property="Orientation" Value="Horizontal">
+          <Setter Property="Width" Value="Auto"/>
+          <Setter Property="Height" Value="0"/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+
   </Application.Resources>
 </Application>

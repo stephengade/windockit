@@ -249,14 +249,19 @@ public sealed class DockWindow : Window
         // Icons keep a fixed layout size and are scaled with a transform. Changing Width every frame made
         // WPF occasionally leave newly added elements unmeasured (drawn at 256px, or not at all), and
         // transforms skip the layout pass entirely.
-        it.Img = new Image
-        {
-            Source = it.Icon, Stretch = Stretch.Uniform, Width = IconCanvas, Height = IconCanvas,
-            RenderTransform = new ScaleTransform(),
-        };
+        it.Img = new Image { Source = it.Icon, Stretch = Stretch.Uniform, Width = IconCanvas, Height = IconCanvas };
         RenderOptions.SetBitmapScalingMode(it.Img, BitmapScalingMode.HighQuality);
         // Shadow values are in the icon's unscaled space (IconCanvas px); at 46px they're ~8px blur, 2px drop.
         it.Img.Effect = new DropShadowEffect { BlurRadius = 32, ShadowDepth = 9, Direction = 270, Opacity = 0.26 };
+        // The holder caches icon and shadow as one bitmap that the GPU scales, so neither is redrawn on
+        // every frame of magnification. (An effect on the cached element itself would be redrawn each frame.)
+        it.Holder = new Grid
+        {
+            Width = IconCanvas, Height = IconCanvas, RenderTransform = new ScaleTransform(),
+            CacheMode = new BitmapCache { RenderAtScale = _cacheScale },
+        };
+        RenderOptions.SetBitmapScalingMode(it.Holder, BitmapScalingMode.HighQuality);
+        it.Holder.Children.Add(it.Img);
         it.Dot = new Ellipse { Width = 4, Height = 4, Fill = _dotBrush, IsHitTestVisible = false };
         if (it.IsPinned)
         {
@@ -319,13 +324,13 @@ public sealed class DockWindow : Window
 
     void Attach(DockItem it)
     {
-        foreach (var el in new UIElement?[] { it.SepLine, it.Img, it.Dot })
+        foreach (var el in new UIElement?[] { it.SepLine, it.Holder, it.Dot })
             if (el != null && !_itemLayer.Children.Contains(el)) _itemLayer.Children.Add(el);
     }
 
     void Detach(DockItem it)
     {
-        foreach (var el in new UIElement?[] { it.SepLine, it.Img, it.Dot })
+        foreach (var el in new UIElement?[] { it.SepLine, it.Holder, it.Dot })
             if (el != null) _itemLayer.Children.Remove(el);
     }
 
@@ -642,21 +647,42 @@ public sealed class DockWindow : Window
         el.Height = r.Height;
     }
 
+    /// <summary>How many 60 Hz frames the current frame stands for, so easing runs at the same speed on any display.</summary>
+    static double s_frames = 1;
+
+    /// <summary>Eases <paramref name="v"/> toward <paramref name="goal"/>; <paramref name="k"/> is the share covered per 60 Hz frame.</summary>
     static bool Approach(ref double v, double goal, double k = 0.28, double eps = 0.2)
     {
         double d = goal - v;
         if (Math.Abs(d) <= eps) { v = goal; return false; }
-        v += d * k;
+        v += d * (1 - Math.Pow(1 - k, s_frames));
         return true;
     }
 
     // ───────────────────────── animation loop ─────────────────────────
 
+    long _lastFrame;
+    double _cacheScale = 0.25;
+
     void Kick()
     {
         if (_animating) return;
         _animating = true;
+        _lastFrame = 0;
         CompositionTarget.Rendering += OnFrame;
+    }
+
+    /// <summary>
+    /// Icons are cached at the largest size they'll be drawn: their resting size normally, the magnified
+    /// size while the pointer is over the dock. Re-caching happens only when that changes.
+    /// </summary>
+    void UpdateIconCache(bool magnified)
+    {
+        double want = Math.Clamp(Math.Ceiling(Base * (magnified ? Mag : 1) * _dpi) / IconCanvas, 0.1, 1);
+        if (Math.Abs(want - _cacheScale) < 0.005) return;
+        _cacheScale = want;
+        foreach (var it in _items)
+            if (it.Holder?.CacheMode is BitmapCache c) c.RenderAtScale = want;
     }
 
     void OnFrame(object? sender, EventArgs e)
@@ -664,6 +690,14 @@ public sealed class DockWindow : Window
         if (ActualWidth <= 0 || ActualHeight <= 0) return;
 
         long now = Stopwatch.GetTimestamp();
+        // Rendering can fire more than once per displayed frame; skip the repeats.
+        if (e is RenderingEventArgs re)
+        {
+            long t = re.RenderingTime.Ticks;
+            if (t == _lastFrame) return;
+            s_frames = _lastFrame == 0 ? 1 : Math.Clamp((t - _lastFrame) / (TimeSpan.TicksPerSecond / 60.0), 0.25, 3);
+            _lastFrame = t;
+        }
         bool moving = false;
         double B = Base, L = Horizontal ? ActualWidth : ActualHeight;
 
@@ -685,7 +719,8 @@ public sealed class DockWindow : Window
         else foreach (var it in _items) it.GoalSize = B;
 
         foreach (var it in _items)
-            if (!it.IsSeparator) moving |= Approach(ref it.Size, it.GoalSize);
+            if (!it.IsSeparator) moving |= Approach(ref it.Size, it.GoalSize, 0.2, 0.05);
+        UpdateIconCache(_items.Any(i => !i.IsSeparator && Math.Max(i.Size, i.GoalSize) > B + 0.5));
 
         // 2) Keep the icon under the cursor under the cursor: anchor the grown row at the mouse.
         double w1 = _items.Sum(CurSlot);
@@ -734,12 +769,12 @@ public sealed class DockWindow : Window
             double bounce = BounceOffset(it, now);
             if (it.BounceStart != 0) moving = true;
 
-            PlaceScaled(it.Img!, ToWin(mc - it.Size / 2, mc + it.Size / 2, iconBase + bounce, iconBase + bounce + it.Size));
+            PlaceScaled(it.Holder!, ToWin(mc - it.Size / 2, mc + it.Size / 2, iconBase + bounce, iconBase + bounce + it.Size));
             double dc = EdgeGap + cOff + PadEdge / 2;
             Place(it.Dot!, ToWin(mc - 2, mc + 2, dc - 2, dc + 2));
             it.Dot!.Visibility = it.IsRunning ? Visibility.Visible : Visibility.Hidden;
             it.Dot.Fill = it.Attention ? AttentionBrush : _dotBrush;
-            it.Img!.Opacity = _dragging && it == _pressItem && _removeArmed ? 0.35 : 1;
+            it.Holder!.Opacity = _dragging && it == _pressItem && _removeArmed ? 0.35 : 1;
         }
 
         _plateM0 = pm0; _plateM1 = pm1;
@@ -824,10 +859,12 @@ public sealed class DockWindow : Window
             _plate.SetShape(-32000, -32000, 0, 0, 0, 0, 0, 0, 0);
             return;
         }
+        // The blur window covers this whole window and stays put; only the glass shapes inside it move.
+        // Being the same size as this window also clips the glass to it, so it never covers the taskbar.
         double s = _dpi;
         int R(double v) => (int)Math.Round(v * s);
-        (int, int, int, int, int) Shape(Rect r) => (R(r.X - vis.X), R(r.Y - vis.Y), R(r.Width), R(r.Height), R(_radius));
-        _plate.SetShapes(R(Left + vis.X), R(Top + vis.Y), R(vis.Width), R(vis.Height),
+        (int, int, int, int, int) Shape(Rect r) => (R(r.X), R(r.Y), R(r.Width), R(r.Height), R(_radius));
+        _plate.SetShapes(R(Left), R(Top), R(ActualWidth), R(ActualHeight),
             _plateRect2.IsEmpty ? [Shape(_plateRect)] : [Shape(_plateRect), Shape(_plateRect2)]);
     }
 
@@ -1179,6 +1216,7 @@ public sealed class DockWindow : Window
         menu.Items.Add(Item("Start with Windows", () => SetStartup(!IsStartup), IsStartup));
         menu.Items.Add(new Separator());
         menu.Items.Add(Item("Open settings folder", () => Start(DockConfig.Folder, null)));
+        menu.Items.Add(Item("Support the developer ♥", App.OpenSupport));
         menu.Items.Add(Item("Quit WinDockIt", () => Application.Current.Shutdown()));
     }
 
