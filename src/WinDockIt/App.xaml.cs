@@ -63,9 +63,14 @@ public partial class App : Application
     /// <summary>Where people can support WinDockIt's developer.</summary>
     internal const string SupportUrl = "https://flossafrica.com/m/stephengade";
 
-    internal static void OpenSupport()
+    /// <summary>WinDockIt's source code, issues and releases.</summary>
+    internal const string RepoUrl = "https://github.com/stephengade/windockit";
+
+    internal static void OpenSupport() => OpenUrl(SupportUrl);
+
+    internal static void OpenUrl(string url)
     {
-        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(SupportUrl) { UseShellExecute = true })?.Dispose(); }
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true })?.Dispose(); }
         catch (Exception ex) { Log(ex); }
     }
 

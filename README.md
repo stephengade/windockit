@@ -1,8 +1,13 @@
 # WinDockIt
 
-A clean, modern dock for Windows: frosted glass, smooth magnification, and it sits on any edge of your screen.
+**A macOS-style dock, menu bar and Launchpad for Windows 10 and 11.**
 
-WinDockIt is a small native app (.NET 9 / WPF). It starts instantly, uses each app's real Windows icon, and stays out of your way.
+WinDockIt can replace the Windows taskbar. It adds:
+- a frosted-glass dock with smooth icon magnification, which can sit on any edge of the screen;
+- a thin status bar along the top with the clock, Wi-Fi, Bluetooth, volume and battery;
+- a full-screen Launchpad that shows every app A–Z, with search.
+
+It's a small native app (.NET 9 / WPF), not an Electron wrapper. It starts instantly, uses each app's real Windows icon, and brings the taskbar back the moment it quits.
 
 WinDockIt is free. If you find it useful, you can [support the developer ♥](https://flossafrica.com/m/stephengade).
 
@@ -52,6 +57,8 @@ WinDockIt is free. If you find it useful, you can [support the developer ♥](ht
 Requires Windows 10 1903 or later (Windows 11 recommended) and the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).
 
 ```bash
+git clone https://github.com/stephengade/windockit.git
+cd windockit
 dotnet run --project src/WinDockIt -c Release
 ```
 
@@ -113,7 +120,7 @@ All layout happens by hand each frame, in "dock space": distance *along* the doc
 
 ## Contributing
 
-Issues and pull requests are welcome. Some things that would be great to have:
+[Issues](https://github.com/stephengade/windockit/issues) and [pull requests](https://github.com/stephengade/windockit/pulls) are welcome. Some things that would be great to have:
 
 - Multi-monitor support (choose the screen, or one dock per screen)
 - Folder "stacks" that fan out
